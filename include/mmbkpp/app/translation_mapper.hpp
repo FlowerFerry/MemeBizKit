@@ -1,6 +1,6 @@
 
-#ifndef MMUPP_TRANSLATION_MAPPER_HPP_INCLUDED
-#define MMUPP_TRANSLATION_MAPPER_HPP_INCLUDED
+#ifndef MMBKPP_TRANSLATION_MAPPER_HPP_INCLUDED
+#define MMBKPP_TRANSLATION_MAPPER_HPP_INCLUDED
 
 //! \file translation_mapper.hpp
 //! 
@@ -23,12 +23,12 @@
 #include <memepp/hash/std_hash.hpp>
 #include <megopp/util/scope_cleanup.h>
 #include <memepp/convert/fmt.hpp>
-#include <mmutilspp/paths/program_path.hpp>
+#include <mmutilspp/fs/program_path.hpp>
 #include <rapidjson/document.h>
 #include <rapidjson/pointer.h>
 #include <fmt/format.h>
 
-namespace mmupp {
+namespace mmbkpp {
 namespace app {
 
     struct translation_loader
@@ -128,7 +128,7 @@ namespace app {
     {
         std::unique_lock<std::shared_mutex> locker(smtx_);
         library_type_ = _library_type;
-        library_path_ = mmupp::paths::relative_with_program_path(_path);
+        library_path_ = mmbkpp::paths::relative_with_program_path(_path);
     }
 
     inline void translation_mapper::init_default_table()
@@ -348,7 +348,7 @@ inline memepp::string_view mmu_tr(
     const memepp::string_view& _context,
     const memepp::string_view& _origin_text)
 {
-    return mmupp::app::translation_mapper::instance().translate(
+    return mmbkpp::app::translation_mapper::instance().translate(
         _context,
         _origin_text);
 }
@@ -358,7 +358,7 @@ inline memepp::string_view mmu_tr1(
     const memepp::string_view& _context,
     const memepp::string_view& _origin_text)
 {
-    return mmupp::app::translation_mapper::instance().translate(
+    return mmbkpp::app::translation_mapper::instance().translate(
         _code,
         _context,
         _origin_text);
@@ -370,11 +370,11 @@ inline memepp::string_view mmu_tr2(
     const memepp::string_view& _context,
     const memepp::string_view& _origin_text)
 {
-    return mmupp::app::translation_mapper::instance().translate(
+    return mmbkpp::app::translation_mapper::instance().translate(
         _dst_code,
         _src_code,
         _context,
         _origin_text);
 }
 
-#endif // !MMUPP_TRANSLATION_MAPPER_HPP_INCLUDED
+#endif // !MMBKPP_TRANSLATION_MAPPER_HPP_INCLUDED
