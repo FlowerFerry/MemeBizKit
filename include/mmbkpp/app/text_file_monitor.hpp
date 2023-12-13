@@ -1,6 +1,6 @@
 
-#ifndef MMUPPAPP_TEXT_FILE_MONITOR_HPP_INCLUDED
-#define MMUPPAPP_TEXT_FILE_MONITOR_HPP_INCLUDED
+#ifndef MMBKPP_APP_TEXT_FILE_MONITOR_HPP_INCLUDED
+#define MMBKPP_APP_TEXT_FILE_MONITOR_HPP_INCLUDED
 
 #include <memory>
 #include <functional>
@@ -18,7 +18,7 @@
 #include "uvw/fs_poll.h"
 #include <ghc/filesystem.hpp>
 
-namespace mmupp::app {
+namespace mmbkpp::app {
 
     template<typename _Object>
     struct txtfile_monitor
@@ -313,4 +313,4 @@ namespace mmupp::app {
     
 };
 
-#endif // !MMUPPAPP_TEXT_FILE_MONITOR_HPP_INCLUDED
+#endif // !MMBKPP_APP_TEXT_FILE_MONITOR_HPP_INCLUDED

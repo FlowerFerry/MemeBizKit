@@ -16,7 +16,7 @@
 
 #include <stdio.h>
 
-#include <mmutils/io/file.h>
+#include <mmutils/fs/file.h>
 
 #include <memepp/string.hpp>
 #include <memepp/convert/fmt.hpp>
@@ -128,7 +128,7 @@ namespace app {
     {
         std::unique_lock<std::shared_mutex> locker(smtx_);
         library_type_ = _library_type;
-        library_path_ = mmbkpp::paths::relative_with_program_path(_path);
+        library_path_ = mmupp::fs::relative_with_program_path(_path);
     }
 
     inline void translation_mapper::init_default_table()

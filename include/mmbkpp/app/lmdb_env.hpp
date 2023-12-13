@@ -1,6 +1,6 @@
 
-#ifndef MMUPP_APP_LMDB_ENV_HPP_INCLUDED
-#define MMUPP_APP_LMDB_ENV_HPP_INCLUDED
+#ifndef MMBKPP_APP_LMDB_ENV_HPP_INCLUDED
+#define MMBKPP_APP_LMDB_ENV_HPP_INCLUDED
 
 #include <mego/predef/symbol/likely.h>
 #include <mego/err/lmdb_convert.h>
@@ -10,7 +10,7 @@
 
 #include <memory>
 
-namespace mmupp::app {
+namespace mmbkpp::app {
     
     struct lmdb_env
     {
@@ -138,4 +138,4 @@ namespace mmupp::app {
     }
 }
 
-#endif // !MMUPP_APP_LMDB_ENV_HPP_INCLUDED
+#endif // !MMBKPP_APP_LMDB_ENV_HPP_INCLUDED
