@@ -223,13 +223,16 @@ namespace async {
         void ssl_clear() noexcept {
             ssl_opt_.reset();
             raw_conn_opt_.ssl = nullptr;
+
+            server_url_ = convert_url(server_url_, !!ssl_opt_);
         }
 
         connect_native_options& assign(const connect_native_options& _conn_opt);
         connect_native_options& assign(const connect_options& _conn_opt);
 
         connect_native_options& operator=(const connect_native_options& _conn_opt) { return assign(_conn_opt); }
-        
+
+        static memepp::string convert_url(const memepp::string& _url, bool _enable_ssl);
     private:
 
         MQTTAsync_connectOptions raw_conn_opt_;
@@ -380,27 +383,15 @@ namespace async {
         if (server_url_ == _server_url)
             return;
         
-        if (ssl_opt_) {
-            if (_server_url.starts_with("tcp:"))
-            {
-                server_url_ = _server_url.replace("tcp:", "ssl:");
-            }
-            else if (server_url_.starts_with("ws:"))
-            {
-                server_url_ = _server_url.replace("ws:", "wss:");
-            }
-            else {
-                server_url_ = _server_url;
-            }
-        }
-        else {
-            server_url_ = _server_url;
-        }
+        server_url_ = convert_url(_server_url, !!ssl_opt_);
     }
 
     inline void connect_native_options::set_ssl_default()
     {
         ssl_opt_ = std::make_unique<ssl_native_options>();
+        raw_conn_opt_.ssl = &(ssl_opt_->raw());
+
+        server_url_ = convert_url(server_url_, !!ssl_opt_);
     }
 
     inline void connect_native_options::set_ssl(const ssl_native_options& _ssl_opt)
@@ -411,14 +402,7 @@ namespace async {
         ssl_opt_ = std::make_unique<ssl_native_options>(_ssl_opt);
         raw_conn_opt_.ssl = &(ssl_opt_->raw());
         
-        if (server_url_.starts_with("tcp:"))
-        {
-            server_url_ = server_url_.replace("tcp:", "ssl:");
-        }
-        else if (server_url_.starts_with("ws:"))
-        {
-            server_url_ = server_url_.replace("ws:", "wss:");
-        }
+        server_url_ = convert_url(server_url_, !!ssl_opt_);
 
     }
 
@@ -474,6 +458,36 @@ namespace async {
         }
 
         return *this;
+    }
+
+    inline memepp::string connect_native_options::convert_url(const memepp::string& _url, bool _enable_ssl)
+    {
+        if (_enable_ssl) {
+            if (_url.starts_with("tcp:"))
+            {
+                return _url.replace("tcp:", "ssl:");
+            }
+            else if (_url.starts_with("ws:"))
+            {
+                return _url.replace("ws:", "wss:");
+            }
+            else {
+                return _url;
+            }
+        }
+        else {
+            if (_url.starts_with("ssl:"))
+            {
+                return _url.replace("ssl:", "tcp:");
+            }
+            else if (_url.starts_with("wss:"))
+            {
+                return _url.replace("wss:", "ws:");
+            }
+            else {
+                return _url;
+            }
+        }
     }
 
     inline disconnect_native_options::disconnect_native_options() :
