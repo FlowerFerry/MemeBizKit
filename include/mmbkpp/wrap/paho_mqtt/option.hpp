@@ -364,9 +364,14 @@ namespace async {
             return;
         private_key_ = _private_key;
         if (private_key_.empty())
+        {
             raw_ssl_opt_.privateKey = nullptr;
-        else
+            raw_ssl_opt_.privateKeyPassword = nullptr;
+        }
+        else {
             raw_ssl_opt_.privateKey = private_key_.data();
+            raw_ssl_opt_.privateKeyPassword = private_key_password_.data();
+        }
     }
 
     inline void ssl_native_options::set_private_key_password(const memepp::string& _private_key_password)
@@ -374,10 +379,11 @@ namespace async {
         if (private_key_password_ == _private_key_password)
             return;
         private_key_password_ = _private_key_password;
-        if (private_key_password_.empty())
-            raw_ssl_opt_.privateKeyPassword = nullptr;
-        else
+        
+        if (raw_ssl_opt_.privateKey)
             raw_ssl_opt_.privateKeyPassword = private_key_password_.data();
+        else
+            raw_ssl_opt_.privateKeyPassword = nullptr;
     }
 
     inline void ssl_native_options::set_enabled_cipher_suites(const memepp::string& _enabled_cipher_suites)
