@@ -16,7 +16,7 @@
 
 #include <stdio.h>
 
-#include <mmutils/fs/file.h>
+#include <mego/util/std/file.h>
 
 #include <memepp/string.hpp>
 #include <memepp/convert/fmt.hpp>
@@ -262,7 +262,7 @@ namespace app {
         path_ = _path;
 
         auto path = fmt::format("{}/{}.json", path_, code_);
-        FILE* fp = mmu_fopen(path.data(), path.size(), "rb", 2);
+        FILE* fp = mgu_fopen(path.data(), path.size(), "rb", 2);
         if (!fp) {
             return std::make_tuple(-1, mm_from(fmt::format("open file(path:{}) failed", path)));
         }
