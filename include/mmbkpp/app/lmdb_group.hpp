@@ -36,14 +36,14 @@ namespace mmbkpp::app {
             return db_mapsize_ * db_count_; 
         }
 
-        std::tuple<cmnerrno_t, memepp::string> get_value(
+        std::tuple<int, memepp::string> get_value(
             const memepp::buffer_view& _key,
             memepp::buffer& _value) const;
 
-        std::tuple<cmnerrno_t, memepp::string> set_values(
+        std::tuple<int, memepp::string> set_values(
             std::unordered_map<memepp::buffer_view, memepp::buffer_view>& _kvs) const;
         
-        std::tuple<cmnerrno_t, memepp::string> get_values(
+        std::tuple<int, memepp::string> get_values(
             const std::vector<memepp::buffer_view>& _keys,
             std::vector<memepp::buffer>& _values) const;
 
@@ -95,7 +95,7 @@ namespace mmbkpp::app {
         db_mapsize_ = _size;
     }
 
-    inline std::tuple<cmnerrno_t, memepp::string> lmdb_group::get_value(
+    inline std::tuple<int, memepp::string> lmdb_group::get_value(
         const memepp::buffer_view& _key,
         memepp::buffer& _value) const
     {
@@ -140,7 +140,7 @@ namespace mmbkpp::app {
         return std::make_tuple(0, "");
     }
 
-    inline std::tuple<cmnerrno_t, memepp::string> lmdb_group::set_values(
+    inline std::tuple<int, memepp::string> lmdb_group::set_values(
         std::unordered_map<memepp::buffer_view, memepp::buffer_view>& _kvs) const
     {
         std::vector< std::unordered_map<memepp::buffer_view, memepp::buffer_view> > 
@@ -207,7 +207,7 @@ namespace mmbkpp::app {
         return std::make_tuple(0, "");
     }
 
-    inline std::tuple<cmnerrno_t, memepp::string> lmdb_group::get_values(
+    inline std::tuple<int, memepp::string> lmdb_group::get_values(
         const std::vector<memepp::buffer_view>& _keys,
         std::vector<memepp::buffer>& _values) const
     {
