@@ -10,6 +10,8 @@
 #include <megopp/util/scope_cleanup.h>
 #include <outcome/result.hpp>
 
+#include <thread>
+#include <chrono>
 #include <type_traits>
 #include <functional>
 
@@ -56,8 +58,12 @@ struct sqlite3_hdl
 
     template<typename _Fn>
     mgpp::err do_read(const char* _sql, _Fn&& _fn);
+    template<typename _Fn>
+    mgpp::err do_read_wait_for(const char* _sql, const std::chrono::milliseconds& _ms, _Fn&& _fn);
 
     mgpp::err do_write(const char* _sql);
+    mgpp::err do_write_wait_for(
+        const char* _sql, const std::chrono::milliseconds& _ms);
 
     template<typename _Fn>
     mgpp::err do_writes(_Fn&& _fn);
@@ -107,12 +113,13 @@ private:
 };
 using sqlite3_hdl_uptr = std::unique_ptr<sqlite3_hdl>;
 using sqlite3_hdl_sptr = std::shared_ptr<sqlite3_hdl>;
+using sqlite3_hdl_wptr = std::weak_ptr<sqlite3_hdl>;
 
 template <typename _Fn>
 inline mgpp::err sqlite3_hdl::do_read(const char* _sql, _Fn && _fn)
 {
     if (MEGO_SYMBOL__UNLIKELY(hdl_ == nullptr)) {
-        return mgpp::err{ MGEC__ERR, "invalid sqlite3 hdl" };
+        return mgpp::err{ MGEC__ERR, "invalid sqlite handle" };
     }
 
     char* errmsg = nullptr;
@@ -126,14 +133,32 @@ inline mgpp::err sqlite3_hdl::do_read(const char* _sql, _Fn && _fn)
     return mgpp::err::make_ok();
 }
 
+template<typename _Fn>
+mgpp::err sqlite3_hdl::do_read_wait_for(
+    const char* _sql, const std::chrono::milliseconds& _ms, _Fn&& _fn)
+{
+    auto start = std::chrono::steady_clock::now();
+    do {
+        auto err = do_read(_sql, std::forward<_Fn>(_fn));
+        if (err.code() == MGEC__DATABASE_BUSY) 
+        {
+            std::this_thread::yield();
+            continue;
+        }
+        return err;
+    } while (std::chrono::steady_clock::now() - start < _ms);
+
+    return mgpp::err{ MGEC__DATABASE_BUSY, "sqlite handle is busy" };
+}
+
 inline mgpp::err sqlite3_hdl::do_write(const char* _sql)
 {
     if (MEGO_SYMBOL__UNLIKELY(hdl_ == nullptr)) {
-        return mgpp::err{ MGEC__ERR, "invalid sqlite3 hdl" };
+        return mgpp::err{ MGEC__ERR, "invalid sqlite handle" };
     }
 
     if (sqlite3_db_readonly(hdl_, nullptr) == 1) {
-        return mgpp::err{ MGEC__ERR, "sqlite3 hdl is readonly" };
+        return mgpp::err{ MGEC__ERR, "sqlite handle is readonly" };
     }
 
     char* errmsg = nullptr;
@@ -146,15 +171,32 @@ inline mgpp::err sqlite3_hdl::do_write(const char* _sql)
     return mgpp::err::make_ok();
 }
 
+inline mgpp::err sqlite3_hdl::do_write_wait_for(
+    const char* _sql, const std::chrono::milliseconds& _ms)
+{
+    auto start = std::chrono::steady_clock::now();
+    do {
+        auto err = do_write(_sql);
+        if (err.code() == MGEC__DATABASE_BUSY)
+        {
+            std::this_thread::yield();
+            continue;
+        }
+        return err;
+    } while (std::chrono::steady_clock::now() - start < _ms);
+
+    return mgpp::err{ MGEC__DATABASE_BUSY, "sqlite handle is busy" };
+}
+
 template <typename _Fn>
 inline mgpp::err sqlite3_hdl::do_writes(_Fn && _fn)
 {
     if (MEGO_SYMBOL__UNLIKELY(hdl_ == nullptr)) {
-        return mgpp::err{ MGEC__ERR, "invalid sqlite3 hdl" };
+        return mgpp::err{ MGEC__ERR, "invalid sqlite handle" };
     }
 
     if (sqlite3_db_readonly(hdl_, nullptr) == 1) {
-        return mgpp::err{ MGEC__ERR, "sqlite3 hdl is readonly" };
+        return mgpp::err{ MGEC__ERR, "sqlite handle is readonly" };
     }
 
     char* errmsg = nullptr;
