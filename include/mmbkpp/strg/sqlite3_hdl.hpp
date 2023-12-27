@@ -67,7 +67,9 @@ struct sqlite3_hdl
 
     template<typename _Fn>
     mgpp::err do_writes(_Fn&& _fn);
-
+    template<typename _Fn>
+    mgpp::err do_writes_wait_for(const std::chrono::milliseconds& _ms, _Fn&& _fn);
+    
     inline constexpr ::sqlite3* native() const noexcept { return hdl_; }
 
     inline static std::unique_ptr<sqlite3_hdl> take(::sqlite3* hdl) noexcept
@@ -220,6 +222,24 @@ inline mgpp::err sqlite3_hdl::do_writes(_Fn && _fn)
 
     cleanup.cancel();
     return mgpp::err::make_ok();
+}
+
+template<typename _Fn>
+inline mgpp::err sqlite3_hdl::do_writes_wait_for(
+    const std::chrono::milliseconds& _ms, _Fn&& _fn)
+{
+    auto start = std::chrono::steady_clock::now();
+    do {
+        auto err = do_writes(std::forward<_Fn>(_fn));
+        if (err.code() == MGEC__DATABASE_BUSY)
+        {
+            std::this_thread::yield();
+            continue;
+        }
+        return err;
+    } while (std::chrono::steady_clock::now() - start < _ms);
+
+    return mgpp::err{ MGEC__DATABASE_BUSY, "sqlite handle is busy" };
 }
 
 inline outcome::checked<std::unique_ptr<sqlite3_hdl>, mgpp::err> 
