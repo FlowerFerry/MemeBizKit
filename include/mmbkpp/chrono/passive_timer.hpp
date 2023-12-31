@@ -243,6 +243,11 @@ namespace chrono {
 			return !is_stop_;
 		}
 
+        inline bool timing(mgu_timestamp_t _curr, bool* _isDie = nullptr) noexcept
+        {
+            return passive_timer::timing(_curr, _isDie);
+        }
+
 		static inline bool on_intervalometer(
 			passive_timer* _timer, void* _u) noexcept
 		{
