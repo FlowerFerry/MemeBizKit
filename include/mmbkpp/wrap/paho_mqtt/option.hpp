@@ -135,7 +135,6 @@ namespace async {
 
         void set_server_url(const memepp::string& _server_url)
         {
-            server_url_ = _server_url;
             server_url_ = connect_options::convert_url(_server_url, !!ssl_opt_);
         }
 
