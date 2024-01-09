@@ -136,11 +136,13 @@ namespace async {
         void set_server_url(const memepp::string& _server_url)
         {
             server_url_ = _server_url;
+            server_url_ = connect_options::convert_url(_server_url, !!ssl_opt_);
         }
 
         void set_ssl(const ssl_options& _ssl_opt)
         {
             ssl_opt_ = std::make_unique<ssl_options>(_ssl_opt);
+            server_url_ = connect_options::convert_url(server_url_, !!ssl_opt_);
         }
         
         void set_username(const memepp::string& _username)
@@ -155,6 +157,7 @@ namespace async {
 
         void ssl_clear() noexcept {
             ssl_opt_.reset();
+            server_url_ = connect_options::convert_url(server_url_, !!ssl_opt_);
         }
 
         connect_options& assign(const connect_options& _conn_opt)
@@ -171,6 +174,7 @@ namespace async {
 
         connect_options& operator=(const connect_options& _conn_opt) { return assign(_conn_opt); }
 
+        static memepp::string convert_url(const memepp::string& _url, bool _enable_ssl);
     private:
 
         std::unique_ptr<ssl_options> ssl_opt_;
@@ -250,7 +254,7 @@ namespace async {
             ssl_opt_.reset();
             raw_conn_opt_.ssl = nullptr;
 
-            server_url_ = convert_url(server_url_, !!ssl_opt_);
+            server_url_ = connect_options::convert_url(server_url_, !!ssl_opt_);
         }
 
         connect_native_options& assign(const connect_native_options& _conn_opt);
@@ -258,7 +262,7 @@ namespace async {
 
         connect_native_options& operator=(const connect_native_options& _conn_opt) { return assign(_conn_opt); }
 
-        static memepp::string convert_url(const memepp::string& _url, bool _enable_ssl);
+        //static memepp::string convert_url(const memepp::string& _url, bool _enable_ssl);
     private:
 
         MQTTAsync_connectOptions raw_conn_opt_;
@@ -461,7 +465,7 @@ namespace async {
         if (server_url_ == _server_url)
             return;
         
-        server_url_ = convert_url(_server_url, !!ssl_opt_);
+        server_url_ = connect_options::convert_url(_server_url, !!ssl_opt_);
     }
 
     inline void connect_native_options::set_ssl_default()
@@ -469,7 +473,7 @@ namespace async {
         ssl_opt_ = std::make_unique<ssl_native_options>();
         raw_conn_opt_.ssl = &(ssl_opt_->raw());
 
-        server_url_ = convert_url(server_url_, !!ssl_opt_);
+        server_url_ = connect_options::convert_url(server_url_, !!ssl_opt_);
     }
 
     inline void connect_native_options::set_ssl(const ssl_native_options& _ssl_opt)
@@ -480,7 +484,7 @@ namespace async {
         ssl_opt_ = std::make_unique<ssl_native_options>(_ssl_opt);
         raw_conn_opt_.ssl = &(ssl_opt_->raw());
         
-        server_url_ = convert_url(server_url_, !!ssl_opt_);
+        server_url_ = connect_options::convert_url(server_url_, !!ssl_opt_);
 
     }
 
@@ -538,7 +542,7 @@ namespace async {
         return *this;
     }
 
-    inline memepp::string connect_native_options::convert_url(const memepp::string& _url, bool _enable_ssl)
+    inline memepp::string connect_options::convert_url(const memepp::string& _url, bool _enable_ssl)
     {
         if (_enable_ssl) {
             if (_url.starts_with("tcp:"))
