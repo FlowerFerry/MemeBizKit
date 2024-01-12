@@ -182,9 +182,43 @@ namespace async {
         memepp::string password_;
     };
 
+    struct create_native_options
+    {
+        create_options()
+            : persistence_type_(MQTTCLIENT_PERSISTENCE_NONE)
+            , raw_create_opt_(MQTTAsync_createOptions_initializer)
+        {}
+
+        create_options(int _mqtt_version)
+            : persistence_type_(MQTTCLIENT_PERSISTENCE_NONE)
+        {
+            if (_mqtt_version == MQTTVERSION_5)
+            {
+                MQTTAsync_createOptions opts = MQTTAsync_createOptions_initializer5;
+                memcpy(&raw_create_opt_, &opts, sizeof(opts));
+            }
+            else {
+                MQTTAsync_createOptions opts = MQTTAsync_createOptions_initializer;
+                memcpy(&raw_create_opt_, &opts, sizeof(opts));
+            }
+        }
+
+        constexpr const memepp::string& client_id() const noexcept { return client_id_; }
+
+        void set_client_id(const memepp::string& _client_id)
+        {
+            client_id_ = _client_id;
+        }
+
+        memepp::string client_id_;
+        int persistence_type_;
+        MQTTAsync_createOptions raw_create_opt_;
+    };
+
     struct ssl_native_options
     {
         ssl_native_options();
+        ssl_native_options(int _mqtt_version);
         ssl_native_options(const ssl_native_options& _ssl_opt);
 
         constexpr MQTTAsync_SSLOptions& raw() noexcept { return raw_ssl_opt_; }
@@ -229,6 +263,7 @@ namespace async {
     struct connect_native_options
     {
         connect_native_options();
+        connect_native_options(int _mqtt_version);
         connect_native_options(const connect_native_options& _conn_opt);
 
         constexpr MQTTAsync_connectOptions& raw() noexcept { return raw_conn_opt_; }
@@ -274,6 +309,7 @@ namespace async {
     struct disconnect_native_options
     {
         disconnect_native_options();
+        disconnect_native_options(int _mqtt_version);
 
         constexpr MQTTAsync_disconnectOptions& raw() noexcept { return raw_disconn_opt_; }
         constexpr const MQTTAsync_disconnectOptions& raw() const noexcept { return raw_disconn_opt_; }
@@ -286,6 +322,19 @@ namespace async {
     inline ssl_native_options::ssl_native_options():
         raw_ssl_opt_(MQTTAsync_SSLOptions_initializer)
     {}
+
+    inline ssl_native_options::ssl_native_options(int _mqtt_version)
+    {
+        if (_mqtt_version == MQTTVERSION_5)
+        {
+            MQTTAsync_SSLOptions opts = MQTTAsync_SSLOptions_initializer5;
+            memcpy(&raw_ssl_opt_, &opts, sizeof(opts));
+        }
+        else {
+            MQTTAsync_SSLOptions opts = MQTTAsync_SSLOptions_initializer;
+            memcpy(&raw_ssl_opt_, &opts, sizeof(opts));
+        }
+    }
 
     inline ssl_native_options::ssl_native_options(const ssl_native_options& _ssl_opt)
     {
@@ -453,6 +502,19 @@ namespace async {
     inline connect_native_options::connect_native_options():
         raw_conn_opt_(MQTTAsync_connectOptions_initializer)
     {}
+
+    inline connect_native_options::connect_native_options(int _mqtt_version)
+    {
+        if (_mqtt_version == MQTTVERSION_5)
+        {
+            MQTTAsync_connectOptions opts = MQTTAsync_connectOptions_initializer5;
+            memcpy(&raw_conn_opt_, &opts, sizeof(opts));
+        }
+        else {
+            MQTTAsync_connectOptions opts = MQTTAsync_connectOptions_initializer;
+            memcpy(&raw_conn_opt_, &opts, sizeof(opts));
+        }
+    }
     
     inline connect_native_options::connect_native_options(const connect_native_options& _conn_opt)
     {
@@ -574,6 +636,19 @@ namespace async {
     inline disconnect_native_options::disconnect_native_options() :
         raw_disconn_opt_(MQTTAsync_disconnectOptions_initializer)
     {}
+
+    inline disconnect_native_options::disconnect_native_options(int _mqtt_version)
+    {
+        if (_mqtt_version == MQTTVERSION_5)
+        {
+            MQTTAsync_disconnectOptions opts = MQTTAsync_disconnectOptions_initializer5;
+            memcpy(&raw_disconn_opt_, &opts, sizeof(opts));
+        }    
+        else {
+            MQTTAsync_disconnectOptions opts = MQTTAsync_disconnectOptions_initializer;
+            memcpy(&raw_disconn_opt_, &opts, sizeof(opts));
+        }
+    }
 
 }
 } // namespace mmbkpp::paho_mqtt
