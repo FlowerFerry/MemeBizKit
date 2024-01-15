@@ -8,6 +8,7 @@
 
 #include <megopp/err/err.h>
 #include <megopp/util/scope_cleanup.h>
+#include <megopp/util/simple_counter.h>
 
 #include <mutex>
 #include <functional>
@@ -149,6 +150,8 @@ protected:
 
     void on_async_destroy_call (uv_async_t * _handle);
     void on_async_destroy_close(uv_handle_t* _handle);
+
+    void on_destroy();
 public:
 
     static outcome::checked<std::shared_ptr<uvbasic_client>, mgpp::err> 
@@ -240,6 +243,7 @@ protected:
     std::shared_ptr<ssl_error_callback> ssl_error_cb_;
     std::shared_ptr<ssl_psk_callback> ssl_psk_cb_;
 
+    mgpp::util::ref_counter<> handle_counter_;
     std::unique_ptr<uv_async_t> async_destroy_;
 };
 
@@ -250,6 +254,11 @@ uvbasic_client::uvbasic_client(const create_native_options& _opts)
     , disconn_opts_(_opts.raw().MQTTVersion)
 {
     sizeof(*this);
+    
+    handle_counter_.set_callback([this](auto&) 
+    {
+        on_destroy();
+    });
 }
 
 uvbasic_client::~uvbasic_client()
@@ -269,6 +278,9 @@ mgpp::err uvbasic_client::init(uv_loop_t* _loop)
     auto async_destroy = std::make_unique<uv_async_t>();
     uv_async_init(_loop, async_destroy.get(), __on_async_destroy_call);
     uv_handle_set_data(reinterpret_cast<uv_handle_t*>(async_destroy.get()), this);
+
+
+    handle_counter_.set_count(1);
 
     locker.lock();
     async_destroy_ = std::move(async_destroy);
@@ -843,6 +855,21 @@ void uvbasic_client::on_async_destroy_call(uv_async_t* _handle)
 
 void uvbasic_client::on_async_destroy_close(uv_handle_t* _handle)
 {
+    auto self = self_;
+    --handle_counter_;
+}
+
+void uvbasic_client::on_destroy()
+{
+    auto self = self_;
+    MEGOPP_UTIL__ON_SCOPE_CLEANUP([this] {
+        self_.reset();
+    });
+
+    if (native_cli_) {
+        MQTTAsync_destroy(&native_cli_);
+    }
+    
 }
 
 inline outcome::checked<std::shared_ptr<uvbasic_client>, mgpp::err>

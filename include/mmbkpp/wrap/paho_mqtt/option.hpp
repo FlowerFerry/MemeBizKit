@@ -2,8 +2,13 @@
 #ifndef MMBK_WRAP_PAHOMQTT_OPTION_HPP_INCLUDED
 #define MMBK_WRAP_PAHOMQTT_OPTION_HPP_INCLUDED
 
-#include "paho/MQTTAsync.h"
-#include <paho/MQTTClient.h>
+#if __has_include(<MQTTAsync.h>)
+#   include <MQTTAsync.h>
+#   include <MQTTClient.h>
+#elif __has_include(<paho/MQTTAsync.h>)
+#   include <paho/MQTTAsync.h>
+#   include <paho/MQTTClient.h>
+#endif
 
 #include <memory>
 
