@@ -184,12 +184,12 @@ namespace async {
 
     struct create_native_options
     {
-        create_options()
+        create_native_options()
             : persistence_type_(MQTTCLIENT_PERSISTENCE_NONE)
             , raw_create_opt_(MQTTAsync_createOptions_initializer)
         {}
 
-        create_options(int _mqtt_version)
+        create_native_options(int _mqtt_version)
             : persistence_type_(MQTTCLIENT_PERSISTENCE_NONE)
         {
             if (_mqtt_version == MQTTVERSION_5)
@@ -202,6 +202,9 @@ namespace async {
                 memcpy(&raw_create_opt_, &opts, sizeof(opts));
             }
         }
+
+        constexpr MQTTAsync_createOptions& raw() noexcept { return raw_create_opt_; }
+        constexpr const MQTTAsync_createOptions& raw() const noexcept { return raw_create_opt_; }
 
         constexpr const memepp::string& client_id() const noexcept { return client_id_; }
 
@@ -218,7 +221,6 @@ namespace async {
     struct ssl_native_options
     {
         ssl_native_options();
-        ssl_native_options(int _mqtt_version);
         ssl_native_options(const ssl_native_options& _ssl_opt);
 
         constexpr MQTTAsync_SSLOptions& raw() noexcept { return raw_ssl_opt_; }
@@ -322,19 +324,6 @@ namespace async {
     inline ssl_native_options::ssl_native_options():
         raw_ssl_opt_(MQTTAsync_SSLOptions_initializer)
     {}
-
-    inline ssl_native_options::ssl_native_options(int _mqtt_version)
-    {
-        if (_mqtt_version == MQTTVERSION_5)
-        {
-            MQTTAsync_SSLOptions opts = MQTTAsync_SSLOptions_initializer5;
-            memcpy(&raw_ssl_opt_, &opts, sizeof(opts));
-        }
-        else {
-            MQTTAsync_SSLOptions opts = MQTTAsync_SSLOptions_initializer;
-            memcpy(&raw_ssl_opt_, &opts, sizeof(opts));
-        }
-    }
 
     inline ssl_native_options::ssl_native_options(const ssl_native_options& _ssl_opt)
     {
