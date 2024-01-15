@@ -29,10 +29,10 @@ namespace obfhw {
     
         double match_score(const info& _other, const match_conds& _conds) const;
 
-        sysinfo_ptr                 sysinfo_;
-        std::vector<cpuinfo_ptr>    cpuinfo_list_;
-        std::vector<meminfo_ptr>    meminfo_list_;
-        std::vector<strginfo_ptr>   strginfo_list_;
+        sysinfo_ptr               sysinfo_;
+        std::vector<cpuinfo_ptr>  cpuinfo_list_;
+        std::vector<meminfo_ptr>  meminfo_list_;
+        std::vector<strginfo_ptr> strginfo_list_;
     };
 
     inline double info::match_score(const info& _other, const match_conds& _conds) const
