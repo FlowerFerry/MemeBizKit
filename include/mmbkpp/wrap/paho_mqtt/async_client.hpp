@@ -152,10 +152,20 @@ protected:
     void on_async_destroy_close(uv_handle_t* _handle);
 
     void on_destroy();
+    inline MQTTAsync native_st() const noexcept { return native_cli_; }
+    inline MQTTAsync native_mt() const
+    {
+        std::lock_guard<std::mutex> locker(mtx_);
+        return native_cli_;
+    }
 public:
 
     static outcome::checked<std::shared_ptr<uvbasic_client>, mgpp::err> 
-        create(const create_native_options& _opts, uv_loop_t* _loop);
+        create(
+            const create_native_options& _opts, 
+            const connect_native_options& _conn_opts,
+            const disconnect_native_options& _disconn_opts,
+            uv_loop_t* _loop);
 
     static int __on_message_arrived(void* _context, char* _topic_name, int _topic_len, MQTTAsync_message* _message);
 
@@ -259,6 +269,19 @@ uvbasic_client::uvbasic_client(const create_native_options& _opts)
     {
         on_destroy();
     });
+
+    conn_opts_.raw().onSuccess  = __on_connect_success;
+    conn_opts_.raw().onFailure  = __on_connect_failure;
+    conn_opts_.raw().onSuccess5 = __on_connect_success5;
+    conn_opts_.raw().onFailure5 = __on_connect_failure5;
+    
+    disconn_opts_.raw().onSuccess  = __on_disconnect_success;
+    disconn_opts_.raw().onFailure  = __on_disconnect_failure;
+    disconn_opts_.raw().onSuccess5 = __on_disconnect_success5;
+    disconn_opts_.raw().onFailure5 = __on_disconnect_failure5;
+
+    conn_opts_.raw().context = this;
+    disconn_opts_.raw().context = this;
 }
 
 uvbasic_client::~uvbasic_client()
@@ -275,14 +298,51 @@ mgpp::err uvbasic_client::init(uv_loop_t* _loop)
         return mgpp::err{ MGEC__ALREADY, "already initialized" };
     locker.unlock();
 
+    MQTTAsync handle;
+    auto rc = MQTTAsync_createWithOptions(
+        &handle,
+        conn_opts_.server_url().data(),
+        create_opts_.client_id().data(),
+        create_opts_.persistence_type(),
+        NULL,
+        &create_opts_.raw()
+    );
+    if (rc != MQTTASYNC_SUCCESS) {
+        return mgpp::err{ MGEC__ERR, rc, "MQTTAsync_createWithOptions failed" };
+    }
+    auto handle_cleanup = megopp::util::scope_cleanup__create(
+        [&handle]() { MQTTAsync_destroy(&handle); }
+    );
+
+    rc = MQTTAsync_setMessageArrivedCallback(handle, this, __on_message_arrived);
+    if (rc != MQTTASYNC_SUCCESS) {
+        return mgpp::err{ MGEC__ERR, rc, "MQTTAsync_setMessageArrivedCallback failed" };
+    }
+    
+    rc = MQTTAsync_setConnected(handle, this, __on_connected);
+    if (rc != MQTTASYNC_SUCCESS) {
+        return mgpp::err{ MGEC__ERR, rc, "MQTTAsync_setConnected failed" };
+    }
+
+    rc = MQTTAsync_setDisconnected(handle, this, __on_disconnected);
+    if (rc != MQTTASYNC_SUCCESS) {
+        return mgpp::err{ MGEC__ERR, rc, "MQTTAsync_setDisconnected failed" };
+    }
+
+    rc = MQTTAsync_setConnectionLostCallback(handle, this, __on_connect_lost);
+    if (rc != MQTTASYNC_SUCCESS) {
+        return mgpp::err{ MGEC__ERR, rc, "MQTTAsync_setConnectionLostCallback failed" };
+    }
+
     auto async_destroy = std::make_unique<uv_async_t>();
     uv_async_init(_loop, async_destroy.get(), __on_async_destroy_call);
     uv_handle_set_data(reinterpret_cast<uv_handle_t*>(async_destroy.get()), this);
 
-
     handle_counter_.set_count(1);
 
     locker.lock();
+    handle_cleanup.cancel();
+    native_cli_ = handle;
     async_destroy_ = std::move(async_destroy);
     self_ = shared_from_this();
     return {};
@@ -851,6 +911,18 @@ inline unsigned int uvbasic_client::on_ssl_psk(const char* _hint, char* _identit
 void uvbasic_client::on_async_destroy_call(uv_async_t* _handle)
 {
     uv_close(reinterpret_cast<uv_handle_t*>(_handle), __on_async_destroy_close);
+
+    std::unique_lock<std::mutex> locker(mtx_);
+    if (MQTTAsync_isConnected(native_cli_)) {
+        //MQTTAsync_disconnectOptions opts = MQTTAsync_disconnectOptions_initializer;
+        //opts.context = this;
+        //opts.onSuccess;
+        //opts.onFailure;
+        //opts.onSuccess5;
+        //opts.onFailure5;
+        //opts.timeout = 1000;
+        //MQTTAsync_disconnect(native_cli_, &opts);
+    }
 }
 
 void uvbasic_client::on_async_destroy_close(uv_handle_t* _handle)
@@ -866,14 +938,20 @@ void uvbasic_client::on_destroy()
         self_.reset();
     });
 
+    std::unique_lock<std::mutex> locker(mtx_);
     if (native_cli_) {
         MQTTAsync_destroy(&native_cli_);
     }
+    locker.unlock();
     
 }
 
 inline outcome::checked<std::shared_ptr<uvbasic_client>, mgpp::err>
-    uvbasic_client::create(const create_native_options& _opts, uv_loop_t* _loop)
+    uvbasic_client::create(
+        const create_native_options& _opts,
+        const connect_native_options& _conn_opts,
+        const disconnect_native_options& _disconn_opts, 
+        uv_loop_t* _loop)
 {
     std::shared_ptr<uvbasic_client> cli(new uvbasic_client(_opts));
     auto e = cli->init(_loop);

@@ -213,6 +213,8 @@ namespace async {
 
         constexpr const memepp::string& client_id() const noexcept { return client_id_; }
 
+        constexpr int persistence_type() const noexcept { return persistence_type_; }
+
         void set_client_id(const memepp::string& _client_id)
         {
             client_id_ = _client_id;
