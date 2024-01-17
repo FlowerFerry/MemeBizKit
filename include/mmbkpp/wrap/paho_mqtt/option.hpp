@@ -26,6 +26,7 @@ namespace async {
         constexpr const memepp::string& trust_store() const noexcept { return trust_store_; }
         constexpr const memepp::string& key_store() const noexcept { return key_store_; }
         constexpr const memepp::string& private_key() const noexcept { return private_key_; }
+        constexpr const memepp::string& private_key_password() const noexcept { return private_key_password_; }
         constexpr const memepp::string& enabled_cipher_suites() const noexcept { return enabled_cipher_suites_; }
         constexpr const memepp::string& ca_path() const noexcept { return ca_path_; }
 
@@ -34,6 +35,7 @@ namespace async {
             trust_store_ = _ssl_opt.trust_store_;
             key_store_ = _ssl_opt.key_store_;
             private_key_ = _ssl_opt.private_key_;
+            private_key_password_ = _ssl_opt.private_key_password_;
             enabled_cipher_suites_ = _ssl_opt.enabled_cipher_suites_;
             ca_path_ = _ssl_opt.ca_path_;
             return *this;
@@ -53,6 +55,11 @@ namespace async {
         {
             private_key_ = _private_key;
         }
+
+        void set_private_key_password(const memepp::string& _private_key_password)
+        {
+            private_key_password_ = _private_key_password;
+        }
         
         void set_enabled_cipher_suites(const memepp::string& _enabled_cipher_suites)
         {
@@ -69,6 +76,7 @@ namespace async {
             return trust_store_ == _ssl_opt.trust_store_ &&
                 key_store_ == _ssl_opt.key_store_ &&
                 private_key_ == _ssl_opt.private_key_ &&
+                private_key_password_ == _ssl_opt.private_key_password_ &&
                 enabled_cipher_suites_ == _ssl_opt.enabled_cipher_suites_ &&
                 ca_path_ == _ssl_opt.ca_path_;
         }
@@ -79,6 +87,7 @@ namespace async {
         memepp::string trust_store_;
         memepp::string key_store_;
         memepp::string private_key_;
+        memepp::string private_key_password_;
         memepp::string enabled_cipher_suites_;
         memepp::string ca_path_;
     };
@@ -159,6 +168,7 @@ namespace async {
         constexpr const memepp::string& trust_store() const noexcept { return trust_store_; }
         constexpr const memepp::string& key_store() const noexcept { return key_store_; }
         constexpr const memepp::string& private_key() const noexcept { return private_key_; }
+        constexpr const memepp::string& private_key_password() const noexcept { return private_key_password_; }
         constexpr const memepp::string& enabled_cipher_suites() const noexcept { return enabled_cipher_suites_; }
         constexpr const memepp::string& ca_path() const noexcept { return ca_path_; }
 
@@ -168,6 +178,7 @@ namespace async {
         void set_trust_store(const memepp::string& _trust_store);
         void set_key_store(const memepp::string& _key_store);
         void set_private_key(const memepp::string& _private_key);
+        void set_private_key_password(const memepp::string& _private_key_password);
         void set_enabled_cipher_suites(const memepp::string& _enabled_cipher_suites);
         void set_ca_path(const memepp::string& _ca_path);
 
@@ -181,6 +192,7 @@ namespace async {
         memepp::string trust_store_;
         memepp::string key_store_;
         memepp::string private_key_;
+        memepp::string private_key_password_;
         memepp::string enabled_cipher_suites_;
         memepp::string ca_path_;
     };
@@ -255,6 +267,7 @@ namespace async {
         set_trust_store(_ssl_opt.trust_store());
         set_key_store(_ssl_opt.key_store());
         set_private_key(_ssl_opt.private_key());
+        set_private_key_password(_ssl_opt.private_key_password());
         set_enabled_cipher_suites(_ssl_opt.enabled_cipher_suites());
         set_ca_path(_ssl_opt.ca_path());
         
@@ -266,6 +279,7 @@ namespace async {
         set_trust_store(_ssl_opt.trust_store());
         set_key_store(_ssl_opt.key_store());
         set_private_key(_ssl_opt.private_key());
+        set_private_key_password(_ssl_opt.private_key_password());
         set_enabled_cipher_suites(_ssl_opt.enabled_cipher_suites());
         set_ca_path(_ssl_opt.ca_path());
 
@@ -305,6 +319,17 @@ namespace async {
             raw_ssl_opt_.privateKey = private_key_.data();
     }
 
+    inline void ssl_native_options::set_private_key_password(const memepp::string& _private_key_password)
+    {
+        if (private_key_password_ == _private_key_password)
+            return;
+        private_key_password_ = _private_key_password;
+        if (private_key_password_.empty())
+            raw_ssl_opt_.privateKeyPassword = nullptr;
+        else
+            raw_ssl_opt_.privateKeyPassword = private_key_password_.data();
+    }
+
     inline void ssl_native_options::set_enabled_cipher_suites(const memepp::string& _enabled_cipher_suites)
     {
         if (enabled_cipher_suites_ == _enabled_cipher_suites)
@@ -336,6 +361,7 @@ namespace async {
             trust_store_ == _ssl_opt.trust_store() &&
             key_store_ == _ssl_opt.key_store() &&
             private_key_ == _ssl_opt.private_key() &&
+            private_key_password_ == _ssl_opt.private_key_password() &&
             enabled_cipher_suites_ == _ssl_opt.enabled_cipher_suites() &&
             ca_path_ == _ssl_opt.ca_path();
     }
@@ -432,7 +458,6 @@ namespace async {
     
     inline connect_native_options& connect_native_options::assign(const connect_options& _conn_opt)
     {
-        raw_conn_opt_ = MQTTAsync_connectOptions_initializer;
 
         set_server_url(_conn_opt.server_url());
         set_username  (_conn_opt.username());
