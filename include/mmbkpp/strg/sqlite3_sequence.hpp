@@ -441,6 +441,9 @@ inline mgpp::err sqlite3_sequence::set_dir_path_and_move(const memepp::string& _
     dir_path_ = _path;
     locker.unlock();
 
+    if (!ghc::filesystem::is_directory(src_dirpath))
+        return mgpp::err::make_ok();
+
     auto dir_iter = ghc::filesystem::directory_iterator(src_dirpath);
     auto dir_end  = ghc::filesystem::directory_iterator();
 
@@ -455,7 +458,7 @@ inline mgpp::err sqlite3_sequence::set_dir_path_and_move(const memepp::string& _
         auto index_id   = atoll(index_name.data());
 
         auto dst_index_path = fmt::format("{}/{}", _path, index_name);
-        auto ec = mgfs__check_and_create_dirs_if_needed(
+        ec = mgfs__check_and_create_dirs_if_needed(
             dst_index_path.data(), dst_index_path.size(), 1, 0);
         if (ec) {
             return mgpp::err{ ec, "create dirs failed" };
@@ -470,10 +473,10 @@ inline mgpp::err sqlite3_sequence::set_dir_path_and_move(const memepp::string& _
         if (!index_info) {
             for (; index_iter != index_end; ++index_iter)
             {
-                std::error_code ec;
+                std::error_code ecode;
                 ghc::filesystem::rename(
                     index_iter->path(),
-                    fmt::format("{}/{}", dst_index_path, index_iter->path().filename().string()), ec);
+                    fmt::format("{}/{}", dst_index_path, index_iter->path().filename().string()), ecode);
                 //if (!ec) {
                 //    ghc::filesystem::remove(index_iter->path(), ec);
                 //}
@@ -505,10 +508,10 @@ inline mgpp::err sqlite3_sequence::set_dir_path_and_move(const memepp::string& _
             index_locker.unlock();
             
             if (!node_info) {
-                std::error_code ec;
+                std::error_code ecode;
                 ghc::filesystem::rename(
                     index_iter->path(),
-                    fmt::format("{}/{}", dst_index_path, node_name), ec);
+                    fmt::format("{}/{}", dst_index_path, node_name), ecode);
                 //if (!ec) {
                 //    ghc::filesystem::remove(index_iter->path(), ec);
                 //}
@@ -557,10 +560,10 @@ inline mgpp::err sqlite3_sequence::set_dir_path_and_move(const memepp::string& _
 
             if (ghc::filesystem::exists(index_iter->path()))
             {
-                std::error_code ec;
+                std::error_code ecode;
                 ghc::filesystem::rename(
                     index_iter->path(),
-                    fmt::format("{}/{}", dst_index_path, node_name), ec);
+                    fmt::format("{}/{}", dst_index_path, node_name), ecode);
             }
             //if (!ec) {
             //    ghc::filesystem::remove(index_iter->path(), ec);
@@ -680,8 +683,11 @@ inline mgpp::err sqlite3_sequence::copy_all_to_path(const memepp::string& _path)
     }
 
     std::unique_lock<std::mutex> locker(mtx_);
-    dir_path_ = _path;
+    //dir_path_ = _path;
     locker.unlock();
+
+    if (!ghc::filesystem::is_directory(src_dirpath))
+        return mgpp::err::make_ok();
 
     auto dir_iter = ghc::filesystem::directory_iterator(src_dirpath);
     auto dir_end  = ghc::filesystem::directory_iterator();
@@ -697,7 +703,7 @@ inline mgpp::err sqlite3_sequence::copy_all_to_path(const memepp::string& _path)
         auto index_id   = atoll(index_name.data());
 
         auto dst_index_path = fmt::format("{}/{}", _path, index_name);
-        auto ec = mgfs__check_and_create_dirs_if_needed(
+        ec = mgfs__check_and_create_dirs_if_needed(
             dst_index_path.data(), dst_index_path.size(), 1, 0);
         if (ec) {
             return mgpp::err{ ec, "create dirs failed" };
@@ -712,11 +718,11 @@ inline mgpp::err sqlite3_sequence::copy_all_to_path(const memepp::string& _path)
         if (!index_info) {
             for (; index_iter != index_end; ++index_iter)
             {
-                std::error_code ec;
+                std::error_code ecode;
                 ghc::filesystem::copy_file(
                     index_iter->path(),
                     fmt::format("{}/{}", dst_index_path, index_iter->path().filename().string()), 
-                    ec
+                    ecode
                 );
             }
             continue;
@@ -746,11 +752,11 @@ inline mgpp::err sqlite3_sequence::copy_all_to_path(const memepp::string& _path)
             index_locker.unlock();
 
             if (!node_info) {
-                std::error_code ec;
+                std::error_code ecode;
                 ghc::filesystem::copy_file(
                     index_iter->path(),
                     fmt::format("{}/{}", dst_index_path, index_iter->path().filename().string()), 
-                    ec
+                    ecode
                 );
                 continue;
             }
@@ -780,11 +786,11 @@ inline mgpp::err sqlite3_sequence::copy_all_to_path(const memepp::string& _path)
                 node_locker.unlock();
             } while (0);
 
-            std::error_code ec;
+            std::error_code ecode;
             ghc::filesystem::copy_file(
                 index_iter->path(),
                 fmt::format("{}/{}", dst_index_path, node_name),
-                ec);
+                ecode);
         }
     }
 
@@ -1210,10 +1216,10 @@ outcome::checked<sqlite3_sequence::count_t, mgpp::err>
     }
 
     count = 0;
-    for (auto& iit : dels) 
+    for (auto& delIt : dels) 
     {
-        auto index_id = iit.first;
-        auto& nodes = iit.second;
+        auto index_id = delIt.first;
+        auto& nodes = delIt.second;
 
         std::unique_lock<std::mutex> locker(mtx_);
         auto iit = index_infos_.find(index_id);
