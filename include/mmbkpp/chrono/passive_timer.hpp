@@ -12,7 +12,7 @@
 
 #include <megopp/util/scope_cleanup.h>
 
-namespace mmbkpp  {
+namespace mmbkpp {
 namespace chrono {
 
 
