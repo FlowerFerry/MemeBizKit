@@ -11,14 +11,25 @@
 
 namespace mmbkpp {
 namespace paho_mqtt {
+
+    enum class ssl_version {
+        none    = 0,
+        tlsv1_0 = 1,
+        tlsv1_1 = 2,
+        tlsv1_2 = 3,
+        tlsv1_3 = 4,
+    };
+    
 namespace async {
 
     struct ssl_options
     {
-        ssl_options() 
+        ssl_options() :
+            ssl_version_(ssl_version::none)
         {}
         
-        ssl_options(const ssl_options& _ssl_opt)
+        ssl_options(const ssl_options& _ssl_opt) :
+            ssl_version_(ssl_version::none)
         {
             assign(_ssl_opt);
         }
@@ -30,6 +41,8 @@ namespace async {
         constexpr const memepp::string& enabled_cipher_suites() const noexcept { return enabled_cipher_suites_; }
         constexpr const memepp::string& ca_path() const noexcept { return ca_path_; }
 
+        constexpr paho_mqtt::ssl_version ssl_version() const noexcept { return ssl_version_; }
+
         ssl_options& assign(const ssl_options& _ssl_opt)
         {
             trust_store_ = _ssl_opt.trust_store_;
@@ -38,6 +51,7 @@ namespace async {
             private_key_password_ = _ssl_opt.private_key_password_;
             enabled_cipher_suites_ = _ssl_opt.enabled_cipher_suites_;
             ca_path_ = _ssl_opt.ca_path_;
+            ssl_version_ = _ssl_opt.ssl_version_;
             return *this;
         }
 
@@ -71,6 +85,11 @@ namespace async {
             ca_path_ = _ca_path;
         }
 
+        void set_ssl_version(paho_mqtt::ssl_version _ssl_version)
+        {
+            ssl_version_ = _ssl_version;
+        }
+
         bool operator==(const ssl_options& _ssl_opt) const
         {
             return trust_store_ == _ssl_opt.trust_store_ &&
@@ -78,7 +97,8 @@ namespace async {
                 private_key_ == _ssl_opt.private_key_ &&
                 private_key_password_ == _ssl_opt.private_key_password_ &&
                 enabled_cipher_suites_ == _ssl_opt.enabled_cipher_suites_ &&
-                ca_path_ == _ssl_opt.ca_path_;
+                ca_path_ == _ssl_opt.ca_path_ &&
+                ssl_version_ == _ssl_opt.ssl_version_;
         }
 
         ssl_options& operator=(const ssl_options& _ssl_opt) { return assign(_ssl_opt); }
@@ -90,6 +110,8 @@ namespace async {
         memepp::string private_key_password_;
         memepp::string enabled_cipher_suites_;
         memepp::string ca_path_;
+
+        paho_mqtt::ssl_version ssl_version_;
     };
 
     struct connect_options
@@ -171,6 +193,8 @@ namespace async {
         constexpr const memepp::string& private_key_password() const noexcept { return private_key_password_; }
         constexpr const memepp::string& enabled_cipher_suites() const noexcept { return enabled_cipher_suites_; }
         constexpr const memepp::string& ca_path() const noexcept { return ca_path_; }
+        
+        constexpr paho_mqtt::ssl_version ssl_version() const noexcept;
 
         ssl_native_options& assign(const ssl_native_options& _ssl_opt);
         ssl_native_options& assign(const ssl_options& _ssl_opt);
@@ -181,6 +205,8 @@ namespace async {
         void set_private_key_password(const memepp::string& _private_key_password);
         void set_enabled_cipher_suites(const memepp::string& _enabled_cipher_suites);
         void set_ca_path(const memepp::string& _ca_path);
+
+        void set_ssl_version(paho_mqtt::ssl_version _ssl_version);
 
         bool operator==(const ssl_native_options& _ssl_opt) const;
 
@@ -263,6 +289,26 @@ namespace async {
         assign(_ssl_opt);
     }
 
+    inline constexpr paho_mqtt::ssl_version ssl_native_options::ssl_version() const noexcept 
+    {
+        switch (raw_ssl_opt_.sslVersion)
+        {
+        case MQTT_SSL_VERSION_DEFAULT:
+            return paho_mqtt::ssl_version::none;
+        case MQTT_SSL_VERSION_TLS_1_0:
+            return paho_mqtt::ssl_version::tlsv1_0;
+        case MQTT_SSL_VERSION_TLS_1_1:
+            return paho_mqtt::ssl_version::tlsv1_1;
+        case MQTT_SSL_VERSION_TLS_1_2:
+            return paho_mqtt::ssl_version::tlsv1_2;
+            //case MQTT_SSL_VERSION_TLS_1_3:
+            //    return paho_mqtt::ssl_version::tlsv1_3;
+        default:
+            break;
+        }
+        return paho_mqtt::ssl_version::none;
+    }
+
     inline ssl_native_options& ssl_native_options::assign(const ssl_native_options& _ssl_opt)
     {
         raw_ssl_opt_ = _ssl_opt.raw();
@@ -285,6 +331,7 @@ namespace async {
         set_private_key_password(_ssl_opt.private_key_password());
         set_enabled_cipher_suites(_ssl_opt.enabled_cipher_suites());
         set_ca_path(_ssl_opt.ca_path());
+        set_ssl_version(_ssl_opt.ssl_version());
 
         return *this;
     }
@@ -353,6 +400,31 @@ namespace async {
             raw_ssl_opt_.CApath = nullptr;
         else
             raw_ssl_opt_.CApath = ca_path_.data();
+    }
+    
+    inline void ssl_native_options::set_ssl_version(paho_mqtt::ssl_version _ssl_version)
+    {
+        switch (_ssl_version)
+        {
+        case paho_mqtt::ssl_version::none:
+            raw_ssl_opt_.sslVersion = MQTT_SSL_VERSION_DEFAULT;
+            break;
+        case paho_mqtt::ssl_version::tlsv1_0:
+            raw_ssl_opt_.sslVersion = MQTT_SSL_VERSION_TLS_1_0;
+            break;
+        case paho_mqtt::ssl_version::tlsv1_1:
+            raw_ssl_opt_.sslVersion = MQTT_SSL_VERSION_TLS_1_1;
+            break;
+        case paho_mqtt::ssl_version::tlsv1_2:
+            raw_ssl_opt_.sslVersion = MQTT_SSL_VERSION_TLS_1_2;
+            break;
+            //case paho_mqtt::ssl_version::tlsv1_3:
+            //    raw_ssl_opt_.sslVersion = MQTT_SSL_VERSION_TLS_1_3;
+            //    break;
+        default:
+            raw_ssl_opt_.sslVersion = MQTT_SSL_VERSION_DEFAULT;
+            break;
+        }
     }
 
     inline bool ssl_native_options::operator==(const ssl_native_options& _ssl_opt) const
