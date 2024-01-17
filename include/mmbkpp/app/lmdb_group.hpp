@@ -1,11 +1,11 @@
 
-#ifndef MMUPPAPP_LMDB_group_HPP_INCLUDED
-#define MMUPPAPP_LMDB_group_HPP_INCLUDED
+#ifndef MMBKPP_APP_LMDB_group_HPP_INCLUDED
+#define MMBKPP_APP_LMDB_group_HPP_INCLUDED
 
 #include <memepp/string.hpp>
 #include <memepp/buffer_view.hpp>
 #include <megopp/util/scope_cleanup.h>
-#include <mmutilspp/paths/program_path.hpp>
+#include <mmutilspp/fs/program_path.hpp>
 #include "lmdb_env.hpp"
 
 #include <liblmdb/lmdb.h>
@@ -16,7 +16,7 @@
 #include <unordered_map>
 #include <memory>
 
-namespace mmupp::app {
+namespace mmbkpp::app {
     
     struct lmdb_group
     {
@@ -72,7 +72,7 @@ namespace mmupp::app {
     };
 
     lmdb_group::lmdb_group(): 
-        dir_path_(mmupp::paths::relative_with_program_path("dbs")),
+        dir_path_(mmupp::fs::relative_with_program_path("dbs")),
         file_prefix_("lt"),
         file_suffix_("db"),
         db_count_(10),
@@ -322,5 +322,5 @@ namespace mmupp::app {
     
 };
 
-#endif // !MMUPPAPP_LMDB_group_HPP_INCLUDED
+#endif // !MMBKPP_APP_LMDB_group_HPP_INCLUDED
 

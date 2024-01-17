@@ -1,6 +1,6 @@
 
-#ifndef MMUPP_CHRONO_PASSIVE_TIMER_HPP_INCLUDED
-#define MMUPP_CHRONO_PASSIVE_TIMER_HPP_INCLUDED
+#ifndef MMBKPP_CHRONO_PASSIVE_TIMER_HPP_INCLUDED
+#define MMBKPP_CHRONO_PASSIVE_TIMER_HPP_INCLUDED
 
 #include <mego/util/std/time.h>
 
@@ -12,7 +12,7 @@
 
 #include <megopp/util/scope_cleanup.h>
 
-namespace mmupp  {
+namespace mmbkpp {
 namespace chrono {
 
 
@@ -489,4 +489,4 @@ namespace chrono {
 };
 };
 
-#endif // !MMUPP_CHRONO_PASSIVE_TIMER_HPP_INCLUDED
+#endif // !MMBKPP_CHRONO_PASSIVE_TIMER_HPP_INCLUDED
