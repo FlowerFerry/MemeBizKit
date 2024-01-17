@@ -7,7 +7,7 @@
 #include <memepp/convert/std/string.hpp>
 #include <megopp/util/scope_cleanup.h>
 #include <megopp/err/err.hpp>
-#include <mmutilspp/paths/program_path.hpp>
+#include <mmutilspp/fs/program_path.hpp>
 #include "lmdb_env.hpp"
 
 #include <mego/err/ec_impl.h>
@@ -20,7 +20,7 @@
 #include <functional>
 #include <atomic>
 
-namespace mmupp { namespace app {
+namespace mmbkpp { namespace app {
 
 template <typename _NumTy>
 class lmdb_based_id_mapper
@@ -74,7 +74,7 @@ private:
 
 template <typename _NumTy>
 inline lmdb_based_id_mapper<_NumTy>::lmdb_based_id_mapper():
-    dir_path_(mmupp::paths::relative_with_program_path("id_mapps")),
+    dir_path_(mmbkpp::paths::relative_with_program_path("id_mapps")),
     subdir_("id_mapp"),
     db_mapsize_(10485760),
     self_incr_index_(std::numeric_limits<typename std::make_unsigned<num_t>::type>::max())
@@ -697,6 +697,6 @@ inline mgpp::err lmdb_based_id_mapper<_NumTy>::__open_envs() const
     return mgpp::err::make_ok();
 }
 
-}} // namespace mmupp::app
+}} // namespace mmbkpp::app
 
 #endif // !MMUPP_APP_LMDB_BASED_ID_MAPPER_HPP_INCLUDED
