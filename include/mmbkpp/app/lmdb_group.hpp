@@ -198,6 +198,10 @@ namespace mmbkpp::app {
             }
             
             txn_cleanup.cancel();
+
+#if MG_OS__WIN_AVAIL
+            Sleep(1);
+#endif
         }
 
         return std::make_tuple(0, "");
