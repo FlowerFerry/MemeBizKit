@@ -1,6 +1,6 @@
 
-#ifndef MMBKPP_APP_LMDB_group_HPP_INCLUDED
-#define MMBKPP_APP_LMDB_group_HPP_INCLUDED
+#ifndef MMBKPP_APP_LMDB_GROUP_HPP_INCLUDED
+#define MMBKPP_APP_LMDB_GROUP_HPP_INCLUDED
 
 #include <memepp/string.hpp>
 #include <memepp/buffer_view.hpp>
@@ -326,5 +326,5 @@ namespace mmbkpp::app {
     
 };
 
-#endif // !MMBKPP_APP_LMDB_group_HPP_INCLUDED
+#endif // !MMBKPP_APP_LMDB_GROUP_HPP_INCLUDED
 
