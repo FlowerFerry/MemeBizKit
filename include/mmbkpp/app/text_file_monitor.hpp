@@ -40,7 +40,7 @@ namespace mmbkpp::app {
         void set_parse_callback(const parse_cb& _cb);
         void set_default_callback(const default_cb& _cb);
 
-        int start(std::shared_ptr<uvw::Loop> _loop);
+        int start(uv_loop_t* _loop);
         int start();
         int stop ();
 
@@ -113,7 +113,7 @@ namespace mmbkpp::app {
     }
 
     template<typename _Object>
-    int txtfile_monitor<_Object>::start(std::shared_ptr<uvw::Loop> _loop)
+    int txtfile_monitor<_Object>::start(uv_loop_t* _loop)
     {
         std::unique_lock<std::mutex> locker(mutex_);
         if (filepath_.empty())
@@ -127,7 +127,7 @@ namespace mmbkpp::app {
             internal_loop_ = true;
         }
         else {
-            loop_ = _loop;
+            loop_ = uvw::Loop::create(_loop);
             internal_loop_ = false;
         }
 
@@ -154,7 +154,7 @@ namespace mmbkpp::app {
         {
         });
 
-		fsEv_->start(path, uvw::FsEventHandle::Event::STAT);
+        fs_ev_->start(path, uvw::FsEventHandle::Event::STAT);
 
         locker.lock();
         if (internal_loop_) {
@@ -273,7 +273,7 @@ namespace mmbkpp::app {
             {
                 auto size = _ev.stat.st_size;
                 if (size >= 0 && size < max_file_size_) {
-                    _handle.read(0, (uint32_t)bSzie);
+                    _handle.read(0, (uint32_t)size);
                 }
                 else {
                     _handle.close();
@@ -303,7 +303,7 @@ namespace mmbkpp::app {
             auto default_cb = default_callback_;
             locker.unlock();
             if (default_cb != nullptr) {
-                auto default_str = default_cb();
+                auto default_str = (*default_cb)();
                 std::ofstream ofs(filepath);
                 ofs << default_str;
                 ofs.close();
