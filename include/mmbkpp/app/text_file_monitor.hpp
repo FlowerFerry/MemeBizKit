@@ -305,7 +305,7 @@ namespace mmbkpp::app {
             if (default_cb != nullptr) {
                 auto default_str = (*default_cb)();
                 std::ofstream ofs(filepath);
-                ofs << default_str;
+                ofs << default_str.data();
                 ofs.close();
             }
         }
