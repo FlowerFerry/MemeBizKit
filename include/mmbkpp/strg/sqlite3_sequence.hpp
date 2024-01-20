@@ -894,8 +894,11 @@ outcome::checked<sqlite3_hdl_sptr, mgpp::err>
         if (result) {
             return result;
         }
+            
         std::this_thread::yield();
         err = result.error();
+        if (result.error().code() == MGEC__NOENT)
+            break;
     } while (std::chrono::steady_clock::now() - start < _ms);
     return outcome::failure(err);
 }
