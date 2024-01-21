@@ -948,6 +948,8 @@ inline outcome::checked<sqlite3_hdl_sptr, mgpp::err>
             iit = index_infos_.emplace(_index, std::make_shared<__index_info>()).first;
         }
         else {
+            // TO_DO: check file exist and open
+            
             return outcome::failure(mgpp::err{ MGEC__NOENT, "index not exists" });
         }    
     }
