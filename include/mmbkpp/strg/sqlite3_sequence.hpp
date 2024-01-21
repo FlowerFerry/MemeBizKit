@@ -943,15 +943,13 @@ inline outcome::checked<sqlite3_hdl_sptr, mgpp::err>
                 ec, _create_if_not_exist ? "failed to create directory": "directory not exists" });
         }
 
-        if (_create_if_not_exist)
-        {
-            iit = index_infos_.emplace(_index, std::make_shared<__index_info>()).first;
+        if (!_create_if_not_exist) {
+            auto node_u8path = filepath(_index, _node);
+            if (!ghc::filesystem::exists(mm_to<memepp::native_string>(node_u8path)))
+                return outcome::failure(mgpp::err{ MGEC__NOENT, "index not exists" });
+
         }
-        else {
-            // TO_DO: check file exist and open
-            
-            return outcome::failure(mgpp::err{ MGEC__NOENT, "index not exists" });
-        }    
+        iit = index_infos_.emplace(_index, std::make_shared<__index_info>()).first;
     }
     index_info = iit->second;
     locker.unlock();
