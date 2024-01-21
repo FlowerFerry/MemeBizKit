@@ -944,7 +944,7 @@ inline outcome::checked<sqlite3_hdl_sptr, mgpp::err>
         }
 
         if (!_create_if_not_exist) {
-            auto node_u8path = filepath(_index, _node);
+            auto node_u8path = make_filepath(dir_path_, file_prefix_, file_suffix_, _index, _node);
             if (!ghc::filesystem::exists(mm_to<memepp::native_string>(node_u8path)))
                 return outcome::failure(mgpp::err{ MGEC__NOENT, "index not exists" });
 
