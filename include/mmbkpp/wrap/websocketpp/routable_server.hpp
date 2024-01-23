@@ -434,7 +434,7 @@ template <typename Config>
 inline void routable_server<Config>::__on_http(const websocketpp::connection_hdl& _hdl)
 {
     // if upgrade header is found, assume this is a websocket connection; otherwise, assume it's an HTTP request
-    auto const& conn = server_.get_con_from_hdl(_hdl);
+    auto conn = server_.get_con_from_hdl(_hdl);
     auto const& headers = conn->get_request_header("upgrade");
     if (headers == "websocket") {
         return ;
@@ -457,7 +457,7 @@ inline void routable_server<Config>::__on_http(const websocketpp::connection_hdl
 template <typename Config>
 inline bool routable_server<Config>::__dispatch_request(const websocketpp::connection_hdl& _hdl, http_handlers& _handlers)
 {
-    auto const& conn = server_.get_con_from_hdl(_hdl);
+    auto conn = server_.get_con_from_hdl(_hdl);
     auto const& path = conn->get_resource();
 
     std::unique_lock<std::mutex> locker(mutex_);

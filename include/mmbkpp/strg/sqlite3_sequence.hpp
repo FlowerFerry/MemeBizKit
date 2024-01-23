@@ -349,7 +349,7 @@ sqlite3_sequence::sqlite3_sequence()
     , max_idle_second_(600)
     //, all_hdl_status_(hdl_status_t::ok)
     , dir_path_(mmupp::fs::relative_with_program_path("db_seqs"))
-    , file_prefix_("index")
+    , file_prefix_("node")
     , file_suffix_("db")
     , table_name_ ("data")
 {}

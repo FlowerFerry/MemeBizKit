@@ -47,11 +47,11 @@ public:
     using success_data_t = std::variant<MQTTAsync_successData*, MQTTAsync_successData5*>;
     using failure_data_t = std::variant<MQTTAsync_failureData*, MQTTAsync_failureData5*>;
 
-    using message_arrived_callback = std::function<message_arrived_cb_t>;
+    using message_arrived_callback   = std::function<message_arrived_cb_t>;
     using delivery_complete_callback = std::function<delivery_complete_cb_t>;
 
     using connect_lost_callback = std::function<connect_lost_cb_t>;
-    using connected_callback = std::function<connected_cb_t>;
+    using connected_callback    = std::function<connected_cb_t>;
     using disconnected_callback = std::function<disconnected_cb_t>;
 
     using update_connect_options_callback = std::function<update_connect_options_cb_t>;
@@ -72,7 +72,7 @@ public:
     using publish_failure_callback = std::function<void(const std::weak_ptr<uvbasic_client>&, int _mqtt_version, const failure_data_t&)>;
 
     using ssl_error_callback = std::function<int(const std::weak_ptr<uvbasic_client>&, const char*, size_t)>;
-    using ssl_psk_callback = std::function<unsigned int(const std::weak_ptr<uvbasic_client>&, const char*, char*, unsigned int, unsigned char*, unsigned int)>;
+    using ssl_psk_callback   = std::function<unsigned int(const std::weak_ptr<uvbasic_client>&, const char*, char*, unsigned int, unsigned char*, unsigned int)>;
 
     ~uvbasic_client();
 
@@ -105,6 +105,10 @@ public:
     void set_ssl_error_callback(const ssl_error_callback& _cb);
     void set_ssl_psk_callback(const ssl_psk_callback& _cb);
 
+    inline constexpr const create_native_options& create_opts() const noexcept { return create_opts_; }
+    inline constexpr const connect_native_options& connect_opts() const noexcept { return conn_opts_; }
+    inline constexpr const disconnect_native_options& disconnect_opts() const noexcept { return disconn_opts_; }
+    
 protected:
     int on_message_arrived(char* _topic_name, int _topic_len, MQTTAsync_message* _message);
     void on_delivery_complete(MQTTAsync_token _token);
@@ -163,8 +167,8 @@ public:
     static outcome::checked<std::shared_ptr<uvbasic_client>, mgpp::err> 
         create(
             const create_native_options& _opts, 
-            const connect_native_options& _conn_opts,
-            const disconnect_native_options& _disconn_opts,
+            const connect_options& _conn_opts,
+            const disconnect_options& _disconn_opts,
             uv_loop_t* _loop);
 
     static int __on_message_arrived(void* _context, char* _topic_name, int _topic_len, MQTTAsync_message* _message);
@@ -949,8 +953,8 @@ void uvbasic_client::on_destroy()
 inline outcome::checked<std::shared_ptr<uvbasic_client>, mgpp::err>
     uvbasic_client::create(
         const create_native_options& _opts,
-        const connect_native_options& _conn_opts,
-        const disconnect_native_options& _disconn_opts, 
+        const connect_options& _conn_opts,
+        const disconnect_options& _disconn_opts, 
         uv_loop_t* _loop)
 {
     std::shared_ptr<uvbasic_client> cli(new uvbasic_client(_opts));

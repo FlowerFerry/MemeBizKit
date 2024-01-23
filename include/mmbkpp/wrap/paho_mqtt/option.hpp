@@ -187,6 +187,24 @@ namespace async {
         memepp::string password_;
     };
 
+    struct disconnect_options
+    {
+        disconnect_options()
+            : timeout_(0)
+            , reasonCode_(MQTTREASONCODE_SUCCESS)
+        {}
+
+        int timeout_;
+        /**
+         * MQTT V5 input properties
+         */
+        //MQTTProperties properties_;
+        /**
+         * Reason code for MQTTV5 disconnect
+         */
+        enum MQTTReasonCodes reasonCode_;
+    };
+
     struct create_native_options
     {
         create_native_options()
