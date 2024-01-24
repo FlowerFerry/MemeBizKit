@@ -222,7 +222,10 @@ namespace async {
         
         void set_clean_session(bool _clean_session)
         {
-            clean_session_ = _clean_session;
+            if (version_ < MQTTVERSION_5)
+                clean_session_ = _clean_session;
+            else
+                clean_session_ = false;
         }
 
         void set_max_inflight(int _max_inflight)
@@ -401,7 +404,7 @@ namespace async {
         create_native_options(int _mqtt_version)
             : persistence_type_(MQTTCLIENT_PERSISTENCE_NONE)
         {
-            if (_mqtt_version == MQTTVERSION_5)
+            if (_mqtt_version >= MQTTVERSION_5)
             {
                 MQTTAsync_createOptions opts = MQTTAsync_createOptions_initializer5;
                 memcpy(&raw_create_opt_, &opts, sizeof(opts));
@@ -509,6 +512,9 @@ namespace async {
         void set_username(const memepp::string& _username);
         void set_password(const memepp::string& _password);
 
+        void set_success5_cb(MQTTAsync_onSuccess5* _success5_cb);
+        void set_failure5_cb(MQTTAsync_onFailure5* _failure5_cb);
+
         void ssl_clear() noexcept {
             ssl_opt_.reset();
             raw_conn_opt_.ssl = nullptr;
@@ -529,6 +535,9 @@ namespace async {
         memepp::string server_url_;
         memepp::string username_;
         memepp::string password_;
+        
+        MQTTAsync_onSuccess5* success5_cb_backup_;
+        MQTTAsync_onFailure5* failure5_cb_backup_;
     };
 
     struct disconnect_native_options
@@ -712,13 +721,17 @@ namespace async {
             ca_path_ == _ssl_opt.ca_path();
     }
 
-    inline connect_native_options::connect_native_options():
-        raw_conn_opt_(MQTTAsync_connectOptions_initializer)
+    inline connect_native_options::connect_native_options()
+        : raw_conn_opt_(MQTTAsync_connectOptions_initializer)
+        , success5_cb_backup_(nullptr)
+        , failure5_cb_backup_(nullptr)
     {}
 
     inline connect_native_options::connect_native_options(int _mqtt_version)
+        : success5_cb_backup_(nullptr)
+        , failure5_cb_backup_(nullptr)
     {
-        if (_mqtt_version == MQTTVERSION_5)
+        if (_mqtt_version >= MQTTVERSION_5)
         {
             MQTTAsync_connectOptions opts = MQTTAsync_connectOptions_initializer5;
             memcpy(&raw_conn_opt_, &opts, sizeof(opts));
@@ -784,9 +797,25 @@ namespace async {
             raw_conn_opt_.password = password_.data();
     }
 
+    inline void connect_native_options::set_success5_cb(MQTTAsync_onSuccess5* _success5_cb)
+    {
+        success5_cb_backup_ = _success5_cb;
+        if (raw().MQTTVersion >= MQTTVERSION_5)
+            raw().onSuccess5 = _success5_cb;
+    }
+    
+    inline void connect_native_options::set_failure5_cb(MQTTAsync_onFailure5* _failure5_cb)
+    {
+        failure5_cb_backup_ = _failure5_cb;
+        if (raw().MQTTVersion >= MQTTVERSION_5)
+            raw().onFailure5 = _failure5_cb;
+    }
+
     inline connect_native_options& connect_native_options::assign(const connect_native_options& _conn_opt)
     {
         raw_conn_opt_ = _conn_opt.raw();
+        success5_cb_backup_ = _conn_opt.success5_cb_backup_;
+        failure5_cb_backup_ = _conn_opt.failure5_cb_backup_;
         
         if (_conn_opt.ssl())
             set_ssl(*_conn_opt.ssl());
@@ -863,7 +892,7 @@ namespace async {
 
     inline disconnect_native_options::disconnect_native_options(int _mqtt_version)
     {
-        if (_mqtt_version == MQTTVERSION_5)
+        if (_mqtt_version >= MQTTVERSION_5)
         {
             MQTTAsync_disconnectOptions opts = MQTTAsync_disconnectOptions_initializer5;
             memcpy(&raw_disconn_opt_, &opts, sizeof(opts));

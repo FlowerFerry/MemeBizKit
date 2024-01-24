@@ -50,16 +50,16 @@ public:
     using success_data_t = std::variant<MQTTAsync_successData*, MQTTAsync_successData5*>;
     using failure_data_t = std::variant<MQTTAsync_failureData*, MQTTAsync_failureData5*>;
 
-    using log_callback = std::function<void(log_level, const memepp::string&)>;
+    using log_callback = std::function<void(const std::weak_ptr<uvbasic_client>&, log_level, const memepp::string&)>;
 
-    using message_arrived_callback   = std::function<int(const memepp::string_view&, MQTTAsync_message*)>;
-    using delivery_complete_callback = std::function<delivery_complete_cb_t>;
+    using message_arrived_callback   = std::function<int (const std::weak_ptr<uvbasic_client>&, const memepp::string_view&, MQTTAsync_message*)>;
+    using delivery_complete_callback = std::function<void(const std::weak_ptr<uvbasic_client>&, MQTTAsync_token)>;
 
-    using connect_lost_callback = std::function<connect_lost_cb_t>;
-    using connected_callback    = std::function<connected_cb_t>;
-    using disconnected_callback = std::function<disconnected_cb_t>;
+    using connect_lost_callback = std::function<void(const std::weak_ptr<uvbasic_client>&, char*)>;
+    using connected_callback    = std::function<void(const std::weak_ptr<uvbasic_client>&, char*)>;
+    using disconnected_callback = std::function<void(const std::weak_ptr<uvbasic_client>&, MQTTProperties*, enum MQTTReasonCodes)>;
 
-    using update_connect_options_callback = std::function<update_connect_options_cb_t>;
+    using update_connect_options_callback = std::function<void(const std::weak_ptr<uvbasic_client>&, MQTTAsync_connectData*)>;
 
     using success_callback = std::function<void(const std::weak_ptr<uvbasic_client>&, int _mqtt_version, const success_data_t&)>;
     using failure_callback = std::function<void(const std::weak_ptr<uvbasic_client>&, int _mqtt_version, const failure_data_t&)>;
@@ -280,14 +280,14 @@ protected:
     inline void _log(log_level _lvl, const char* _fmt, Args&&... _args)
     {
         if (log_cb_) {
-            log_cb_(_lvl, mm_from(fmt::format(_fmt, std::forward<Args>(_args)...)));
+            log_cb_(weak_from_this(), _lvl, mm_from(fmt::format(_fmt, std::forward<Args>(_args)...)));
         }
     }
     
     inline void _log(log_level _lvl, const char* _fmt)
     {
         if (log_cb_) {
-            log_cb_(_lvl, mm_from(_fmt));
+            log_cb_(weak_from_this(), _lvl, mm_from(_fmt));
         }
     }
 
@@ -358,8 +358,8 @@ uvbasic_client::uvbasic_client(const create_native_options& _opts)
     conn_opts_.raw().context    = this;
     conn_opts_.raw().onSuccess  = __on_connect_success;
     conn_opts_.raw().onFailure  = __on_connect_failure;
-    conn_opts_.raw().onSuccess5 = __on_connect_success5;
-    conn_opts_.raw().onFailure5 = __on_connect_failure5;
+    conn_opts_.set_success5_cb(__on_connect_success5);
+    conn_opts_.set_failure5_cb(__on_connect_failure5);
 
     disconn_opts_.raw().context    = this;
     disconn_opts_.raw().onSuccess  = __on_disconnect_success;
@@ -801,7 +801,10 @@ inline int uvbasic_client::on_message_arrived(char* _topic_name, int _topic_len,
         MQTTAsync_free(_topic_name);
     });
 
-    auto result = message_arrived_cb_(mm_view(_topic_name, _topic_len), _message);
+    if (!message_arrived_cb_)
+        return 1;
+
+    auto result = message_arrived_cb_(weak_from_this(), mm_view(_topic_name, _topic_len), _message);
     if (result == 0) {
         cleanup.cancel();
         return 0;
@@ -822,7 +825,8 @@ inline void uvbasic_client::on_delivery_complete(MQTTAsync_token _token)
     //}
     //locker.unlock();
 
-    delivery_complete_cb_(_token);
+    if (delivery_complete_cb_)
+        delivery_complete_cb_(weak_from_this(), _token);
 }
 
 inline void uvbasic_client::on_connect_lost(char* _cause)
@@ -838,7 +842,8 @@ inline void uvbasic_client::on_connect_lost(char* _cause)
     //}
     //locker.unlock();
 
-    connect_lost_cb_(_cause);
+    if (connect_lost_cb_)
+        connect_lost_cb_(weak_from_this(), _cause);
 }
 
 inline void uvbasic_client::on_connected(char* _cause)
@@ -854,7 +859,8 @@ inline void uvbasic_client::on_connected(char* _cause)
     //}
     //locker.unlock();
 
-    connected_cb_(_cause);
+    if (connected_cb_)
+        connected_cb_(weak_from_this(), _cause);
 }
 
 inline void uvbasic_client::on_disconnected(MQTTProperties* _response, enum MQTTReasonCodes _reason)
@@ -870,7 +876,8 @@ inline void uvbasic_client::on_disconnected(MQTTProperties* _response, enum MQTT
     //}
     //locker.unlock();
 
-    disconnected_cb_(_response, _reason);
+    if (disconnected_cb_)
+        disconnected_cb_(weak_from_this(), _response, _reason);
 }
 
 inline void uvbasic_client::on_success(MQTTAsync_successData* _response)
@@ -951,7 +958,8 @@ inline void uvbasic_client::on_connect_success(MQTTAsync_successData* _response)
     //}
     //locker.unlock();
 
-    connect_success_cb_(weak_from_this(), MQTTVERSION_DEFAULT, _response);
+    if (connect_success_cb_)
+        connect_success_cb_(weak_from_this(), MQTTVERSION_DEFAULT, _response);
 }
 
 inline void uvbasic_client::on_connect_failure(MQTTAsync_failureData* _response)
@@ -967,7 +975,8 @@ inline void uvbasic_client::on_connect_failure(MQTTAsync_failureData* _response)
     //}
     //locker.unlock();
 
-    connect_failure_cb_(weak_from_this(), MQTTVERSION_DEFAULT, _response);
+    if (connect_failure_cb_)
+        connect_failure_cb_(weak_from_this(), MQTTVERSION_DEFAULT, _response);
 }
 
 inline void uvbasic_client::on_connect_success5(MQTTAsync_successData5* _response)
@@ -984,7 +993,8 @@ inline void uvbasic_client::on_connect_success5(MQTTAsync_successData5* _respons
     //}
     //locker.unlock();
 
-    connect_success_cb_(weak_from_this(), MQTTVERSION_5, _response);
+    if (connect_success_cb_)
+        connect_success_cb_(weak_from_this(), MQTTVERSION_5, _response);
 }
 
 inline void uvbasic_client::on_connect_failure5(MQTTAsync_failureData5* _response)
@@ -1000,7 +1010,8 @@ inline void uvbasic_client::on_connect_failure5(MQTTAsync_failureData5* _respons
     //}
     //locker.unlock();
 
-    connect_failure_cb_(weak_from_this(), MQTTVERSION_5, _response);
+    if (connect_failure_cb_)
+        connect_failure_cb_(weak_from_this(), MQTTVERSION_5, _response);
 }
 
 inline void uvbasic_client::on_disconnect_success(MQTTAsync_successData* _response)
@@ -1016,7 +1027,8 @@ inline void uvbasic_client::on_disconnect_success(MQTTAsync_successData* _respon
     //}
     //locker.unlock();
 
-    disconnect_success_cb_(weak_from_this(), MQTTVERSION_DEFAULT, _response);
+    if (disconnect_success_cb_)
+        disconnect_success_cb_(weak_from_this(), MQTTVERSION_DEFAULT, _response);
 }
 
 inline void uvbasic_client::on_disconnect_failure(MQTTAsync_failureData* _response)
@@ -1032,7 +1044,8 @@ inline void uvbasic_client::on_disconnect_failure(MQTTAsync_failureData* _respon
     //}
     //locker.unlock();
 
-    disconnect_failure_cb_(weak_from_this(), MQTTVERSION_DEFAULT, _response);
+    if (disconnect_failure_cb_)
+        disconnect_failure_cb_(weak_from_this(), MQTTVERSION_DEFAULT, _response);
 }
 
 inline void uvbasic_client::on_disconnect_success5(MQTTAsync_successData5* _response)
@@ -1048,7 +1061,8 @@ inline void uvbasic_client::on_disconnect_success5(MQTTAsync_successData5* _resp
     //}
     //locker.unlock();
 
-    disconnect_success_cb_(weak_from_this(), MQTTVERSION_5, _response);
+    if (disconnect_success_cb_)
+        disconnect_success_cb_(weak_from_this(), MQTTVERSION_5, _response);
 }
 
 inline void uvbasic_client::on_disconnect_failure5(MQTTAsync_failureData5* _response)
@@ -1064,7 +1078,8 @@ inline void uvbasic_client::on_disconnect_failure5(MQTTAsync_failureData5* _resp
     //}
     //locker.unlock();
 
-    disconnect_failure_cb_(weak_from_this(), MQTTVERSION_5, _response);
+    if (disconnect_failure_cb_)
+        disconnect_failure_cb_(weak_from_this(), MQTTVERSION_5, _response);
 }
 
 inline void uvbasic_client::on_subscribe_success(MQTTAsync_successData* _response)
@@ -1080,7 +1095,8 @@ inline void uvbasic_client::on_subscribe_success(MQTTAsync_successData* _respons
     //}
     //locker.unlock();
 
-    subscribe_success_cb_(weak_from_this(), MQTTVERSION_DEFAULT, _response);
+    if (subscribe_success_cb_)
+        subscribe_success_cb_(weak_from_this(), MQTTVERSION_DEFAULT, _response);
 }
 
 inline void uvbasic_client::on_subscribe_failure(MQTTAsync_failureData* _response)
@@ -1096,7 +1112,8 @@ inline void uvbasic_client::on_subscribe_failure(MQTTAsync_failureData* _respons
     //}
     //locker.unlock();
 
-    subscribe_failure_cb_(weak_from_this(), MQTTVERSION_DEFAULT, _response);
+    if (subscribe_failure_cb_)
+        subscribe_failure_cb_(weak_from_this(), MQTTVERSION_DEFAULT, _response);
 }
 
 inline void uvbasic_client::on_subscribe_success5(MQTTAsync_successData5* _response)
@@ -1112,7 +1129,8 @@ inline void uvbasic_client::on_subscribe_success5(MQTTAsync_successData5* _respo
     //}
     //locker.unlock();
 
-    subscribe_success_cb_(weak_from_this(), MQTTVERSION_5, _response);
+    if (subscribe_success_cb_)
+        subscribe_success_cb_(weak_from_this(), MQTTVERSION_5, _response);
 }
 
 inline void uvbasic_client::on_subscribe_failure5(MQTTAsync_failureData5* _response)
@@ -1128,7 +1146,8 @@ inline void uvbasic_client::on_subscribe_failure5(MQTTAsync_failureData5* _respo
     //}
     //locker.unlock();
 
-    subscribe_failure_cb_(weak_from_this(), MQTTVERSION_5, _response);
+    if (subscribe_failure_cb_)
+        subscribe_failure_cb_(weak_from_this(), MQTTVERSION_5, _response);
 }
 
 inline void uvbasic_client::on_unsubscribe_success(MQTTAsync_successData* _response)
@@ -1144,7 +1163,8 @@ inline void uvbasic_client::on_unsubscribe_success(MQTTAsync_successData* _respo
     //}
     //locker.unlock();
 
-    unsubscribe_success_cb_(weak_from_this(), MQTTVERSION_DEFAULT, _response);
+    if (unsubscribe_success_cb_)
+        unsubscribe_success_cb_(weak_from_this(), MQTTVERSION_DEFAULT, _response);
 }
 
 inline void uvbasic_client::on_unsubscribe_failure(MQTTAsync_failureData* _response)
@@ -1160,7 +1180,8 @@ inline void uvbasic_client::on_unsubscribe_failure(MQTTAsync_failureData* _respo
     //}
     //locker.unlock();
 
-    unsubscribe_failure_cb_(weak_from_this(), MQTTVERSION_DEFAULT, _response);
+    if (unsubscribe_failure_cb_)
+        unsubscribe_failure_cb_(weak_from_this(), MQTTVERSION_DEFAULT, _response);
 }
 
 inline void uvbasic_client::on_unsubscribe_success5(MQTTAsync_successData5* _response)
@@ -1176,7 +1197,8 @@ inline void uvbasic_client::on_unsubscribe_success5(MQTTAsync_successData5* _res
     //}
     //locker.unlock();
 
-    unsubscribe_success_cb_(weak_from_this(), MQTTVERSION_5, _response);
+    if (unsubscribe_success_cb_)
+        unsubscribe_success_cb_(weak_from_this(), MQTTVERSION_5, _response);
 }
 
 inline void uvbasic_client::on_unsubscribe_failure5(MQTTAsync_failureData5* _response)
@@ -1192,7 +1214,8 @@ inline void uvbasic_client::on_unsubscribe_failure5(MQTTAsync_failureData5* _res
     //}
     //locker.unlock();
 
-    unsubscribe_failure_cb_(weak_from_this(), MQTTVERSION_5, _response);
+    if (unsubscribe_failure_cb_)
+        unsubscribe_failure_cb_(weak_from_this(), MQTTVERSION_5, _response);
 }
 
 inline void uvbasic_client::on_publish_success(MQTTAsync_successData* _response)
@@ -1208,7 +1231,8 @@ inline void uvbasic_client::on_publish_success(MQTTAsync_successData* _response)
     //}
     //locker.unlock();
 
-    publish_success_cb_(weak_from_this(), MQTTVERSION_DEFAULT, _response);
+    if (publish_success_cb_)
+        publish_success_cb_(weak_from_this(), MQTTVERSION_DEFAULT, _response);
 }
 
 inline void uvbasic_client::on_publish_failure(MQTTAsync_failureData* _response)
@@ -1224,7 +1248,8 @@ inline void uvbasic_client::on_publish_failure(MQTTAsync_failureData* _response)
     //}
     //locker.unlock();
 
-    publish_failure_cb_(weak_from_this(), MQTTVERSION_DEFAULT, _response);
+    if (publish_failure_cb_)
+        publish_failure_cb_(weak_from_this(), MQTTVERSION_DEFAULT, _response);
 }
 
 inline void uvbasic_client::on_publish_success5(MQTTAsync_successData5* _response)
@@ -1240,7 +1265,8 @@ inline void uvbasic_client::on_publish_success5(MQTTAsync_successData5* _respons
     //}
     //locker.unlock();
 
-    publish_success_cb_(weak_from_this(), MQTTVERSION_5, _response);
+    if (publish_success_cb_)
+        publish_success_cb_(weak_from_this(), MQTTVERSION_5, _response);
 }
 
 inline void uvbasic_client::on_publish_failure5(MQTTAsync_failureData5* _response)
@@ -1256,7 +1282,8 @@ inline void uvbasic_client::on_publish_failure5(MQTTAsync_failureData5* _respons
     //}
     //locker.unlock();
 
-    publish_failure_cb_(weak_from_this(), MQTTVERSION_5, _response);
+    if (publish_failure_cb_)
+        publish_failure_cb_(weak_from_this(), MQTTVERSION_5, _response);
 }
 
 inline int uvbasic_client::on_ssl_error(const char* _str, size_t _len)
@@ -1271,8 +1298,9 @@ inline int uvbasic_client::on_ssl_error(const char* _str, size_t _len)
     //    return 1;
     //}
     //locker.unlock();
-
-    return ssl_error_cb_(weak_from_this(), _str, _len);
+    if (ssl_error_cb_)
+        return ssl_error_cb_(weak_from_this(), _str, _len);
+    return 1;
 }
 
 inline unsigned int uvbasic_client::on_ssl_psk(const char* _hint, char* _identity, unsigned int _max_identity_len, unsigned char* _psk, unsigned int _max_psk_len)
@@ -1287,8 +1315,9 @@ inline unsigned int uvbasic_client::on_ssl_psk(const char* _hint, char* _identit
     //    return 1;
     //}
     //locker.unlock();
-
-    return ssl_psk_cb_(weak_from_this(), _hint, _identity, _max_identity_len, _psk, _max_psk_len);
+    if (ssl_psk_cb_)
+        return ssl_psk_cb_(weak_from_this(), _hint, _identity, _max_identity_len, _psk, _max_psk_len);
+    return 1;
 }
 
 inline void uvbasic_client::on_destroy_async_call(uv_async_t* _handle)
