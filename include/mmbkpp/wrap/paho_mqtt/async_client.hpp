@@ -906,14 +906,7 @@ inline int uvbasic_client::on_message_arrived(char* _topic_name, int _topic_len,
     if (log_lvl_ <= log_level::trace)
         _log(log_level::trace, "uvbasic_client({})::on_message_arrived: topic={}", 
             create_opts_.client_id(), mm_view(_topic_name, _topic_len));
-
-    //std::unique_lock<std::mutex> locker(mtx_);
-    //auto cb = message_arrived_cb_;
-    //if (!cb) {
-    //    return 1;
-    //}
-    //locker.unlock();
-
+    
     auto cleanup = megopp::util::scope_cleanup__create([&] {
         MQTTAsync_freeMessage(&_message);
         MQTTAsync_free(_topic_name);
@@ -935,14 +928,7 @@ inline void uvbasic_client::on_delivery_complete(MQTTAsync_token _token)
     if (log_lvl_ <= log_level::trace)
         _log(log_level::trace, "uvbasic_client({})::on_delivery_complete: token=%d", 
             create_opts_.client_id(), static_cast<int>(_token));
-
-    //std::unique_lock<std::mutex> locker(mtx_);
-    //auto cb = delivery_complete_cb_;
-    //if (!cb) {
-    //    return;
-    //}
-    //locker.unlock();
-
+    
     if (delivery_complete_cb_)
         delivery_complete_cb_(weak_from_this(), _token);
 }
@@ -991,13 +977,6 @@ inline void uvbasic_client::on_disconnected(MQTTProperties* _response, enum MQTT
         _log(log_level::trace, "uvbasic_client({})::on_disconnected: reason={}",
             create_opts_.client_id(), static_cast<int>(_reason));
         
-    //std::unique_lock<std::mutex> locker(mtx_);
-    //auto cb = disconnected_cb_;
-    //if (!cb) {
-    //    return;
-    //}
-    //locker.unlock();
-
     if (disconnected_cb_)
         disconnected_cb_(weak_from_this(), _response, _reason);
 }
@@ -1072,14 +1051,7 @@ inline void uvbasic_client::on_connect_success(MQTTAsync_successData* _response)
     if (log_lvl_ <= log_level::trace)
         _log(log_level::trace, "uvbasic_client({})::on_connect_success",
             create_opts_.client_id());
-
-    //std::unique_lock<std::mutex> locker(mtx_);
-    //auto cb = connect_success_cb_;
-    //if (!cb) {
-    //    return;
-    //}
-    //locker.unlock();
-
+    
     connect_status_.value = connect_status::connected;
 
     if (connect_success_cb_)
@@ -1096,14 +1068,7 @@ inline void uvbasic_client::on_connect_failure(MQTTAsync_failureData* _response)
     {
         wait_conn_restored_ = true;
     }
-    //auto e = __disconnect_mt();
-    //if (e) {
-    //    if (log_lvl_ <= log_level::trace)
-    //        _log(log_level::trace, "uvbasic_client({})::on_connect_failure; disconnect failed; code= {}",
-    //            create_opts_.client_id(), e.user_code());
-    //}
     
-
     if (connect_failure_cb_)
         connect_failure_cb_(weak_from_this(), MQTTVERSION_DEFAULT, _response);
 }
@@ -1115,13 +1080,8 @@ inline void uvbasic_client::on_connect_success5(MQTTAsync_successData5* _respons
             create_opts_.client_id());
 
 
-    //std::unique_lock<std::mutex> locker(mtx_);
-    //auto cb = connect_success_cb_;
-    //if (!cb) {
-    //    return;
-    //}
-    //locker.unlock();
-
+    connect_status_.value = connect_status::connected;
+    
     if (connect_success_cb_)
         connect_success_cb_(weak_from_this(), MQTTVERSION_5, _response);
 }
@@ -1132,13 +1092,11 @@ inline void uvbasic_client::on_connect_failure5(MQTTAsync_failureData5* _respons
         _log(log_level::trace, "uvbasic_client({})::on_connect_failure5",
             create_opts_.client_id());
 
-    //std::unique_lock<std::mutex> locker(mtx_);
-    //auto cb = connect_failure_cb_;
-    //if (!cb) {
-    //    return;
-    //}
-    //locker.unlock();
-
+    if (conn_opts_.raw().automaticReconnect != 0)
+    {
+        wait_conn_restored_ = true;
+    }
+    
     if (connect_failure_cb_)
         connect_failure_cb_(weak_from_this(), MQTTVERSION_5, _response);
 }
@@ -1149,13 +1107,8 @@ inline void uvbasic_client::on_disconnect_success(MQTTAsync_successData* _respon
         _log(log_level::trace, "uvbasic_client({})::on_disconnect_success",
             create_opts_.client_id());
 
-    //std::unique_lock<std::mutex> locker(mtx_);
-    //auto cb = disconnect_success_cb_;
-    //if (!cb) {
-    //    return;
-    //}
-    //locker.unlock();
-
+    connect_status_.value = connect_status::disconnected;
+    
     if (disconnect_success_cb_)
         disconnect_success_cb_(weak_from_this(), MQTTVERSION_DEFAULT, _response);
 }
@@ -1166,12 +1119,7 @@ inline void uvbasic_client::on_disconnect_failure(MQTTAsync_failureData* _respon
         _log(log_level::trace, "uvbasic_client({})::on_disconnect_failure",
             create_opts_.client_id());
 
-    //std::unique_lock<std::mutex> locker(mtx_);
-    //auto cb = disconnect_failure_cb_;
-    //if (!cb) {
-    //    return;
-    //}
-    //locker.unlock();
+    // TO_DO
 
     if (disconnect_failure_cb_)
         disconnect_failure_cb_(weak_from_this(), MQTTVERSION_DEFAULT, _response);
@@ -1182,13 +1130,8 @@ inline void uvbasic_client::on_disconnect_success5(MQTTAsync_successData5* _resp
     if (log_lvl_ <= log_level::trace)
         _log(log_level::trace, "uvbasic_client({})::on_disconnect_success5",
             create_opts_.client_id());
-    
-    //std::unique_lock<std::mutex> locker(mtx_);
-    //auto cb = disconnect_success_cb_;
-    //if (!cb) {
-    //    return;
-    //}
-    //locker.unlock();
+
+    connect_status_.value = connect_status::disconnected;
 
     if (disconnect_success_cb_)
         disconnect_success_cb_(weak_from_this(), MQTTVERSION_5, _response);
@@ -1200,12 +1143,7 @@ inline void uvbasic_client::on_disconnect_failure5(MQTTAsync_failureData5* _resp
         _log(log_level::trace, "uvbasic_client({})::on_disconnect_failure5",
             create_opts_.client_id());
 
-    //std::unique_lock<std::mutex> locker(mtx_);
-    //auto cb = disconnect_failure_cb_;
-    //if (!cb) {
-    //    return;
-    //}
-    //locker.unlock();
+    // TO_DO
 
     if (disconnect_failure_cb_)
         disconnect_failure_cb_(weak_from_this(), MQTTVERSION_5, _response);
@@ -1216,14 +1154,7 @@ inline void uvbasic_client::on_subscribe_success(MQTTAsync_successData* _respons
     if (log_lvl_ <= log_level::trace)
         _log(log_level::trace, "uvbasic_client({})::on_subscribe_success",
             create_opts_.client_id());
-
-    //std::unique_lock<std::mutex> locker(mtx_);
-    //auto cb = subscribe_success_cb_;
-    //if (!cb) {
-    //    return;
-    //}
-    //locker.unlock();
-
+    
     if (subscribe_success_cb_)
         subscribe_success_cb_(weak_from_this(), MQTTVERSION_DEFAULT, _response);
 }
@@ -1233,14 +1164,7 @@ inline void uvbasic_client::on_subscribe_failure(MQTTAsync_failureData* _respons
     if (log_lvl_ <= log_level::trace)
         _log(log_level::trace, "uvbasic_client({})::on_subscribe_failure",
             create_opts_.client_id());
-
-    //std::unique_lock<std::mutex> locker(mtx_);
-    //auto cb = subscribe_failure_cb_;
-    //if (!cb) {
-    //    return;
-    //}
-    //locker.unlock();
-
+    
     if (subscribe_failure_cb_)
         subscribe_failure_cb_(weak_from_this(), MQTTVERSION_DEFAULT, _response);
 }
@@ -1250,14 +1174,7 @@ inline void uvbasic_client::on_subscribe_success5(MQTTAsync_successData5* _respo
     if (log_lvl_ <= log_level::trace)
         _log(log_level::trace, "uvbasic_client({})::on_subscribe_success5",
             create_opts_.client_id());
-
-    //std::unique_lock<std::mutex> locker(mtx_);
-    //auto cb = subscribe_success_cb_;
-    //if (!cb) {
-    //    return;
-    //}
-    //locker.unlock();
-
+    
     if (subscribe_success_cb_)
         subscribe_success_cb_(weak_from_this(), MQTTVERSION_5, _response);
 }
@@ -1267,14 +1184,7 @@ inline void uvbasic_client::on_subscribe_failure5(MQTTAsync_failureData5* _respo
     if (log_lvl_ <= log_level::trace)
         _log(log_level::trace, "uvbasic_client({})::on_subscribe_failure5",
             create_opts_.client_id());
-
-    //std::unique_lock<std::mutex> locker(mtx_);
-    //auto cb = subscribe_failure_cb_;
-    //if (!cb) {
-    //    return;
-    //}
-    //locker.unlock();
-
+    
     if (subscribe_failure_cb_)
         subscribe_failure_cb_(weak_from_this(), MQTTVERSION_5, _response);
 }
@@ -1284,14 +1194,7 @@ inline void uvbasic_client::on_unsubscribe_success(MQTTAsync_successData* _respo
     if (log_lvl_ <= log_level::trace)
         _log(log_level::trace, "uvbasic_client({})::on_unsubscribe_success",
             create_opts_.client_id());
-
-    //std::unique_lock<std::mutex> locker(mtx_);
-    //auto cb = unsubscribe_success_cb_;
-    //if (!cb) {
-    //    return;
-    //}
-    //locker.unlock();
-
+    
     if (unsubscribe_success_cb_)
         unsubscribe_success_cb_(weak_from_this(), MQTTVERSION_DEFAULT, _response);
 }
@@ -1302,13 +1205,6 @@ inline void uvbasic_client::on_unsubscribe_failure(MQTTAsync_failureData* _respo
         _log(log_level::trace, "uvbasic_client({})::on_unsubscribe_failure",
             create_opts_.client_id());
     
-    //std::unique_lock<std::mutex> locker(mtx_);
-    //auto cb = unsubscribe_failure_cb_;
-    //if (!cb) {
-    //    return;
-    //}
-    //locker.unlock();
-
     if (unsubscribe_failure_cb_)
         unsubscribe_failure_cb_(weak_from_this(), MQTTVERSION_DEFAULT, _response);
 }
@@ -1319,13 +1215,6 @@ inline void uvbasic_client::on_unsubscribe_success5(MQTTAsync_successData5* _res
         _log(log_level::trace, "uvbasic_client({})::on_unsubscribe_success5",
             create_opts_.client_id());
     
-    //std::unique_lock<std::mutex> locker(mtx_);
-    //auto cb = unsubscribe_success_cb_;
-    //if (!cb) {
-    //    return;
-    //}
-    //locker.unlock();
-
     if (unsubscribe_success_cb_)
         unsubscribe_success_cb_(weak_from_this(), MQTTVERSION_5, _response);
 }
@@ -1336,13 +1225,6 @@ inline void uvbasic_client::on_unsubscribe_failure5(MQTTAsync_failureData5* _res
         _log(log_level::trace, "uvbasic_client({})::on_unsubscribe_failure5",
             create_opts_.client_id());
     
-    //std::unique_lock<std::mutex> locker(mtx_);
-    //auto cb = unsubscribe_failure_cb_;
-    //if (!cb) {
-    //    return;
-    //}
-    //locker.unlock();
-
     if (unsubscribe_failure_cb_)
         unsubscribe_failure_cb_(weak_from_this(), MQTTVERSION_5, _response);
 }
@@ -1353,13 +1235,6 @@ inline void uvbasic_client::on_publish_success(MQTTAsync_successData* _response)
         _log(log_level::trace, "uvbasic_client({})::on_publish_success",
             create_opts_.client_id());
     
-    //std::unique_lock<std::mutex> locker(mtx_);
-    //auto cb = publish_success_cb_;
-    //if (!cb) {
-    //    return;
-    //}
-    //locker.unlock();
-
     if (publish_success_cb_)
         publish_success_cb_(weak_from_this(), MQTTVERSION_DEFAULT, _response);
 }
@@ -1370,13 +1245,6 @@ inline void uvbasic_client::on_publish_failure(MQTTAsync_failureData* _response)
         _log(log_level::trace, "uvbasic_client({})::on_publish_failure",
             create_opts_.client_id());
     
-    //std::unique_lock<std::mutex> locker(mtx_);
-    //auto cb = publish_failure_cb_;
-    //if (!cb) {
-    //    return;
-    //}
-    //locker.unlock();
-
     if (publish_failure_cb_)
         publish_failure_cb_(weak_from_this(), MQTTVERSION_DEFAULT, _response);
 }
@@ -1387,13 +1255,6 @@ inline void uvbasic_client::on_publish_success5(MQTTAsync_successData5* _respons
         _log(log_level::trace, "uvbasic_client({})::on_publish_success5",
             create_opts_.client_id());
     
-    //std::unique_lock<std::mutex> locker(mtx_);
-    //auto cb = publish_success_cb_;
-    //if (!cb) {
-    //    return;
-    //}
-    //locker.unlock();
-
     if (publish_success_cb_)
         publish_success_cb_(weak_from_this(), MQTTVERSION_5, _response);
 }
@@ -1404,13 +1265,6 @@ inline void uvbasic_client::on_publish_failure5(MQTTAsync_failureData5* _respons
         _log(log_level::trace, "uvbasic_client({})::on_publish_failure5",
             create_opts_.client_id());
     
-    //std::unique_lock<std::mutex> locker(mtx_);
-    //auto cb = publish_failure_cb_;
-    //if (!cb) {
-    //    return;
-    //}
-    //locker.unlock();
-
     if (publish_failure_cb_)
         publish_failure_cb_(weak_from_this(), MQTTVERSION_5, _response);
 }
@@ -1420,13 +1274,7 @@ inline int uvbasic_client::on_ssl_error(const char* _str, size_t _len)
     if (log_lvl_ <= log_level::trace)
         _log(log_level::trace, "uvbasic_client({})::on_ssl_error",
             create_opts_.client_id());
-
-    //std::unique_lock<std::mutex> locker(mtx_);
-    //auto cb = ssl_error_cb_;
-    //if (!cb) {
-    //    return 1;
-    //}
-    //locker.unlock();
+    
     if (ssl_error_cb_)
         return ssl_error_cb_(weak_from_this(), _str, _len);
     return 1;
@@ -1438,12 +1286,6 @@ inline unsigned int uvbasic_client::on_ssl_psk(const char* _hint, char* _identit
         _log(log_level::trace, "uvbasic_client({})::on_ssl_psk",
             create_opts_.client_id());
     
-    //std::unique_lock<std::mutex> locker(mtx_);
-    //auto cb = ssl_psk_cb_;
-    //if (!cb) {
-    //    return 1;
-    //}
-    //locker.unlock();
     if (ssl_psk_cb_)
         return ssl_psk_cb_(weak_from_this(), _hint, _identity, _max_identity_len, _psk, _max_psk_len);
     return 1;
