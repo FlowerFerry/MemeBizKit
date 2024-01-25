@@ -1,4 +1,4 @@
-
+﻿
 #ifndef MMBKPP_WRAP_PAHOMQTT_ASYNC_CLIENT_H_INCLUDED
 #define MMBKPP_WRAP_PAHOMQTT_ASYNC_CLIENT_H_INCLUDED
 
@@ -13,8 +13,9 @@
 #include <memepp/convert/fmt.hpp>
 
 #include <mutex>
-#include <functional>
+#include <atomic>
 #include <variant>
+#include <functional>
 
 #include <fmt/format.h>
 #include <outcome/result.hpp>
@@ -33,6 +34,18 @@ class uvbasic_client : public std::enable_shared_from_this<uvbasic_client>
     mgpp::err init(uv_loop_t* _loop);
 
 public:
+    struct connect_status
+    {
+        enum {
+            disconnected,
+            connecting,
+            connected,
+            disconnecting
+        };
+    
+        std::atomic_int value = disconnected;
+    };
+    
     typedef int  message_arrived_cb_t(const char*, int, MQTTAsync_message*);
     typedef void delivery_complete_cb_t(MQTTAsync_token);
     typedef void connect_lost_cb_t(char*);
@@ -58,6 +71,7 @@ public:
     using connect_lost_callback = std::function<void(const std::weak_ptr<uvbasic_client>&, char*)>;
     using connected_callback    = std::function<void(const std::weak_ptr<uvbasic_client>&, char*)>;
     using disconnected_callback = std::function<void(const std::weak_ptr<uvbasic_client>&, MQTTProperties*, enum MQTTReasonCodes)>;
+    using reconnected_callback  = std::function<void(const std::weak_ptr<uvbasic_client>&)>;
 
     using update_connect_options_callback = std::function<void(const std::weak_ptr<uvbasic_client>&, MQTTAsync_connectData*)>;
 
@@ -95,6 +109,7 @@ public:
     void set_connect_lost_callback(const connect_lost_callback& _cb);
     void set_connected_callback(const connected_callback& _cb);
     void set_disconnected_callback(const disconnected_callback& _cb);
+    void set_reconnected_callback(const reconnected_callback& _cb);
 
     // void set_update_connect_options_callback(const update_connect_options_callback& _cb);
 
@@ -121,6 +136,11 @@ public:
     
     mgpp::err connect();
     mgpp::err disconnect();
+
+    mgpp::err send_message(const memepp::string& _destination_name, const MQTTAsync_message& _msg, MQTTAsync_responseOptions& _opts);
+
+    mgpp::err subscribe  (const memepp::string& _topic, int _qos, MQTTAsync_responseOptions& _opts);
+    mgpp::err unsubscribe(const memepp::string& _topic, MQTTAsync_responseOptions& _opts);
 
     inline constexpr const create_native_options& create_opts() const noexcept { return create_opts_; }
     inline constexpr const connect_native_options& connect_opts() const noexcept { return conn_opts_; }
@@ -193,21 +213,22 @@ protected:
     void on_destroy();
     
     mgpp::err __connect_mt();
+    mgpp::err __disconnect_mt();
     
     //mgpp::err __set_auto_reconnect(bool _b);
     inline constexpr bool __auto_reconnect_enable() const noexcept { return conn_opts_.raw().automaticReconnect != 0; }
 
-    inline constexpr bool __auto_reconn_hdl_running_st() const noexcept { return auto_reconn_hdl_running_; }
+    inline bool __auto_reconn_hdl_running_st() const noexcept { return auto_reconn_hdl_running_; }
     inline bool __auto_reconn_hdl_running_mt() const noexcept
     {
-        std::unique_lock<std::mutex> locker(mtx_);
+        //std::unique_lock<std::mutex> locker(mtx_);
         return auto_reconn_hdl_running_;
     }
 
-    inline constexpr void __set_auto_reconn_hdl_running_st(bool _b) noexcept { auto_reconn_hdl_running_ = _b; }
+    inline void __set_auto_reconn_hdl_running_st(bool _b) noexcept { auto_reconn_hdl_running_ = _b; }
     inline void __set_auto_reconn_hdl_running_mt(bool _b)
     {
-        std::unique_lock<std::mutex> locker(mtx_);
+        //std::unique_lock<std::mutex> locker(mtx_);
         auto_reconn_hdl_running_ = _b;
     }
 public:
@@ -302,7 +323,9 @@ protected:
     log_level log_lvl_ = log_level::warn;
     log_callback log_cb_;
     
-    bool auto_reconn_hdl_running_ = false;
+    std::atomic_bool auto_reconn_hdl_running_ = false;
+    std::atomic_bool wait_conn_restored_ = false;
+    connect_status   connect_status_;
 
     message_arrived_callback message_arrived_cb_;
     delivery_complete_callback delivery_complete_cb_;
@@ -310,6 +333,7 @@ protected:
     connect_lost_callback connect_lost_cb_;
     connected_callback connected_cb_;
     disconnected_callback disconnected_cb_;
+    reconnected_callback reconnected_cb_;
 
     std::shared_ptr<update_connect_options_callback> update_connect_options_cb_;
     
@@ -449,6 +473,86 @@ inline mgpp::err uvbasic_client::connect()
 
 inline mgpp::err uvbasic_client::disconnect()
 {
+    wait_conn_restored_ = false;
+    
+    return {};
+}
+
+inline mgpp::err uvbasic_client::send_message(const memepp::string& _destination_name, const MQTTAsync_message& _msg, MQTTAsync_responseOptions& _opts)
+{
+    _opts.context = this;
+    if (create_opts_.raw().MQTTVersion < MQTTVERSION_5)
+    {
+        _opts.onSuccess = __on_subscribe_success;
+        _opts.onFailure = __on_subscribe_failure;
+    }
+    else {
+        _opts.onSuccess5 = __on_subscribe_success5;
+        _opts.onFailure5 = __on_subscribe_failure5;
+    }
+
+    std::unique_lock<std::mutex> locker(mtx_);
+    auto hdl = native_cli_;
+    locker.unlock();
+
+    int rc = 0;
+    if ((rc = MQTTAsync_sendMessage(native_cli_, _destination_name.data(), &_msg, &_opts)) != MQTTASYNC_SUCCESS)
+    {
+        return mgpp::err{ MGEC__ERR, rc, "send_message failed" };
+    }
+
+    return {};
+}
+
+inline mgpp::err uvbasic_client::subscribe(const memepp::string& _topic, int _qos, MQTTAsync_responseOptions& _opts)
+{
+    _opts.context = this;
+    if (create_opts_.raw().MQTTVersion < MQTTVERSION_5)
+    {
+        _opts.onSuccess = __on_subscribe_success;
+        _opts.onFailure = __on_subscribe_failure;
+    }
+    else {
+        _opts.onSuccess5 = __on_subscribe_success5;
+        _opts.onFailure5 = __on_subscribe_failure5;
+    }
+
+    std::unique_lock locker(mtx_);
+    auto hdl = native_cli_;
+    locker.unlock();
+
+    int rc = 0;
+    if ((rc = MQTTAsync_subscribe(hdl, _topic.data(), _qos, &_opts)) != MQTTASYNC_SUCCESS)
+    {
+        return mgpp::err{ MGEC__ERR, rc, "subscribe failed" };
+    }
+
+    return {};
+}
+
+inline mgpp::err uvbasic_client::unsubscribe(const memepp::string& _topic, MQTTAsync_responseOptions& _opts)
+{
+    _opts.context = this;
+    if (create_opts_.raw().MQTTVersion < MQTTVERSION_5)
+    {
+        _opts.onSuccess = __on_subscribe_success;
+        _opts.onFailure = __on_subscribe_failure;
+    }
+    else {
+        _opts.onSuccess5 = __on_subscribe_success5;
+        _opts.onFailure5 = __on_subscribe_failure5;
+    }
+        
+    std::unique_lock locker(mtx_);
+    auto hdl = native_cli_;
+    locker.unlock();
+
+    int rc = 0;
+    if ((rc = MQTTAsync_unsubscribe(hdl, _topic.data(), &_opts)) != MQTTASYNC_SUCCESS)
+    {
+        return mgpp::err{ MGEC__ERR, rc, "unsubscribe failed" };
+    }
+
     return {};
 }
 
@@ -617,6 +721,20 @@ inline void uvbasic_client::set_disconnected_callback(const disconnected_callbac
         return;
     locker.unlock();
     disconnected_cb_ = _cb;
+}
+
+inline void uvbasic_client::set_reconnected_callback(const reconnected_callback& _cb)
+{
+    std::unique_lock<std::mutex> locker(mtx_);
+    if (native_cli_) {
+        if (MQTTAsync_isConnected(native_cli_))
+            return;
+    }
+
+    if (__auto_reconn_hdl_running_st())
+        return;
+    locker.unlock();
+    reconnected_cb_ = _cb;
 }
 
 inline void uvbasic_client::set_success_callback(const success_callback& _cb)
@@ -835,12 +953,8 @@ inline void uvbasic_client::on_connect_lost(char* _cause)
         _log(log_level::trace, "uvbasic_client({})::on_connect_lost",
             create_opts_.client_id());
     
-    //std::unique_lock<std::mutex> locker(mtx_);
-    //auto cb = connect_lost_cb_;
-    //if (!cb) {
-    //    return;
-    //}
-    //locker.unlock();
+    if (conn_opts_.raw().automaticReconnect != 0)
+        wait_conn_restored_ = true;
 
     if (connect_lost_cb_)
         connect_lost_cb_(weak_from_this(), _cause);
@@ -852,12 +966,20 @@ inline void uvbasic_client::on_connected(char* _cause)
         _log(log_level::trace, "uvbasic_client({})::on_connected",
             create_opts_.client_id());
 
-    //std::unique_lock<std::mutex> locker(mtx_);
-    //auto cb = connected_cb_;
-    //if (!cb) {
-    //    return;
-    //}
-    //locker.unlock();
+    if (wait_conn_restored_) {
+        wait_conn_restored_ = false;
+
+        if (connect_status_.value == connect_status::connecting)
+            connect_status_.value =  connect_status::connected;
+        
+        if (log_lvl_ <= log_level::trace)
+            _log(log_level::trace, "uvbasic_client({})::on_reconnected",
+                create_opts_.client_id());
+        
+        if (reconnected_cb_)
+            reconnected_cb_(weak_from_this());
+        
+    }
 
     if (connected_cb_)
         connected_cb_(weak_from_this(), _cause);
@@ -958,6 +1080,8 @@ inline void uvbasic_client::on_connect_success(MQTTAsync_successData* _response)
     //}
     //locker.unlock();
 
+    connect_status_.value = connect_status::connected;
+
     if (connect_success_cb_)
         connect_success_cb_(weak_from_this(), MQTTVERSION_DEFAULT, _response);
 }
@@ -968,12 +1092,17 @@ inline void uvbasic_client::on_connect_failure(MQTTAsync_failureData* _response)
         _log(log_level::trace, "uvbasic_client({})::on_connect_failure",
             create_opts_.client_id());
 
-    //std::unique_lock<std::mutex> locker(mtx_);
-    //auto cb = connect_failure_cb_;
-    //if (!cb) {
-    //    return;
+    if (conn_opts_.raw().automaticReconnect != 0)
+    {
+        wait_conn_restored_ = true;
+    }
+    //auto e = __disconnect_mt();
+    //if (e) {
+    //    if (log_lvl_ <= log_level::trace)
+    //        _log(log_level::trace, "uvbasic_client({})::on_connect_failure; disconnect failed; code= {}",
+    //            create_opts_.client_id(), e.user_code());
     //}
-    //locker.unlock();
+    
 
     if (connect_failure_cb_)
         connect_failure_cb_(weak_from_this(), MQTTVERSION_DEFAULT, _response);
@@ -1488,10 +1617,35 @@ inline mgpp::err uvbasic_client::__connect_mt()
     auto hdl = native_cli_;
     locker.unlock();
 
+    if (connect_status_.value != connect_status::disconnected)
+        return mgpp::err{ MGEC__ALREADY, "already connected" };
+    connect_status_.value = connect_status::connecting;
+
     int rc = 0;
     if ((rc = MQTTAsync_connect(hdl, &conn_opts_.raw())) != MQTTASYNC_SUCCESS)
     {
+        connect_status_.value = connect_status::disconnected;
         return mgpp::err{ MGEC__ERR, rc, "'MQTTAsync_connect' function failed" };
+    }
+
+    return {};
+}
+
+inline mgpp::err uvbasic_client::__disconnect_mt()
+{
+    std::unique_lock<std::mutex> locker(mtx_);
+    auto hdl = native_cli_;
+    locker.unlock();
+
+    if (connect_status_.value != connect_status::connected)
+        return mgpp::err{ MGEC__ALREADY, "already disconnected" };
+    connect_status_.value = connect_status::disconnecting;
+
+    int rc = 0;
+    if ((rc = MQTTAsync_disconnect(hdl, &disconn_opts_.raw())) != MQTTASYNC_SUCCESS)
+    {
+        connect_status_.value = connect_status::connected;
+        return mgpp::err{ MGEC__ERR, rc, "'MQTTAsync_disconnect' function failed" };
     }
 
     return {};
