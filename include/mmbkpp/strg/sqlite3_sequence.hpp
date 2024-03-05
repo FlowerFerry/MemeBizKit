@@ -473,6 +473,12 @@ inline mgpp::err sqlite3_sequence::set_dir_path_and_move(const memepp::string& _
         if (!index_info) {
             for (; index_iter != index_end; ++index_iter)
             {
+                if (index_iter->path().extension().string() != file_suffix_.c_str())
+                    continue;
+
+                if (!ghc::filesystem::exists(index_iter->path()))
+                    continue;
+
                 std::error_code ecode;
                 ghc::filesystem::rename(
                     index_iter->path(),
@@ -718,6 +724,12 @@ inline mgpp::err sqlite3_sequence::copy_all_to_path(const memepp::string& _path)
         if (!index_info) {
             for (; index_iter != index_end; ++index_iter)
             {
+                if (index_iter->path().extension().string() != file_suffix_.c_str())
+                    continue;
+                
+                if (!ghc::filesystem::exists(index_iter->path()))
+                    continue;
+
                 std::error_code ecode;
                 ghc::filesystem::copy_file(
                     index_iter->path(),
@@ -1157,7 +1169,13 @@ outcome::checked<sqlite3_sequence::count_t, mgpp::err>
 
             auto node_name = index_iter->path().filename().string();
             auto node_path = index_iter->path();
+            
+            if (node_path.extension().string() != file_suffix_.c_str())
+                continue;
 
+            if (!ghc::filesystem::exists(index_iter->path()))
+                continue;
+            
             std::vector<memepp::string_view> node_name_parts;
             memepp::split(memepp::view(node_name), ".", 
                 memepp::split_behavior_t::skip_empty_parts, std::back_inserter(node_name_parts));
@@ -1311,6 +1329,12 @@ outcome::checked<sqlite3_sequence::count_t, mgpp::err>
         std::map<node_id_t, std::string> node_paths;
         for (; index_iter != index_end; ++index_iter)
         {
+            if (index_iter->path().extension().string() != file_suffix_.c_str())
+                continue;
+
+            if (!ghc::filesystem::exists(index_iter->path()))
+                continue;
+
             if (!ghc::filesystem::is_regular_file(index_iter->status())) 
                 continue;
 
