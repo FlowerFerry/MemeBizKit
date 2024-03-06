@@ -1,4 +1,4 @@
-
+﻿
 #ifndef MMBK_WRAP_PAHOMQTT_OPTION_HPP_INCLUDED
 #define MMBK_WRAP_PAHOMQTT_OPTION_HPP_INCLUDED
 
@@ -295,80 +295,80 @@ namespace async {
         memepp::string server_url_;
 
         /**
-          * һ�������� null ��β���ַ��������飬ָ���ͻ��˽����ӵ���Щ��������ÿ���ַ����ĸ�ʽΪ <i>protocol://host:port</i>��
-          * <i>protocol</i> ������ <i>tcp</i>��<i>ssl</i>��<i>ws</i> �� <i>wss</i>��
-          * ֻ���������� TLS �汾�Ŀ�ʱ������Чʹ�� TLS ǰ׺��ssl��wss����
-          * ���� <i>host</i>��������
-          * ָ�� IP ��ַ�����������磬Ҫ���ӵ��ڱ��ػ��������еķ�������ʹ��Ĭ�ϵ� MQTT �˿ڣ���ָ��
-          * <i>tcp://localhost:1883</i>��
+          * 一个包含以 null 结尾的字符串的数组，指定客户端将连接到哪些服务器。每个字符串的格式为 <i>protocol://host:port</i>。
+          * <i>protocol</i> 必须是 <i>tcp</i>，<i>ssl</i>，<i>ws</i> 或 <i>wss</i>。
+          * 只有在链接了 TLS 版本的库时，才有效使用 TLS 前缀（ssl，wss）。
+          * 对于 <i>host</i>，您可以
+          * 指定 IP 地址或域名。例如，要连接到在本地机器上运行的服务器并使用默认的 MQTT 端口，请指定
+          * <i>tcp://localhost:1883</i>。
           */
         std::vector<memepp::string> server_urls_;
         memepp::string username_;
         memepp::string password_;
         
-        /** "����"���������Ϊ��λ�������˿ͻ��˺ͷ�����֮����ͨ�ŵ����ʱ��
-          * �ͻ��˻�ȷ��ÿ������������������һ����Ϣ�������硣�ڸ�ʱ�������ڣ����û���������
-          * ����Ϣ���ͻ��˻ᷢ��һ���ǳ�С�� MQTT "ping" ��Ϣ�������������ȷ�ϡ�����
-          * ���ʹ�ͻ����ܹ��ڲ��صȴ���ʱ��� TCP/IP ��ʱ������£���⵽���������ٿ��á�
-          * �����ϣ�������κα����������Ϊ 0��
+        /** "保活"间隔，以秒为单位，定义了客户端和服务器之间无通信的最大时间
+          * 客户端会确保每个保活周期内至少有一条消息经过网络。在该时间周期内，如果没有数据相关
+          * 的消息，客户端会发送一个非常小的 MQTT "ping" 消息，服务器会进行确认。保活
+          * 间隔使客户端能够在不必等待长时间的 TCP/IP 超时的情况下，检测到服务器不再可用。
+          * 如果不希望进行任何保活处理，设置为 0。
           */
         int keep_alive_interval_;
 
         /**
-          * ���ǲ���ֵ��cleansession ���������ӺͶϿ�����ʱ���ƿͻ��˺ͷ���������Ϊ��
-          * �ͻ��˺ͷ����������ֻỰ״̬��Ϣ����Щ��Ϣ����ȷ�� "����һ��" �� "��һ��"
-          * ���ݣ��� "��һ��" �յ���Ϣ���Ự״̬Ҳ������ MQTT �ͻ��˴����Ķ��ġ�����ѡ���ڻỰ֮�䱣�ֻ���״̬��Ϣ��
+          * 这是布尔值。cleansession 设置在连接和断开连接时控制客户端和服务器的行为。
+          * 客户端和服务器都保持会话状态信息。这些信息用于确保 "至少一次" 和 "仅一次"
+          * 传递，和 "仅一次" 收到消息。会话状态也包含由 MQTT 客户端创建的订阅。可以选择在会话之间保持或丢弃状态信息。
           *
-          * �� cleansession Ϊ��ʱ��״̬��Ϣ�����ӺͶϿ�ʱ���������� cleansession ����Ϊ�ٻᱣ��״̬
-          * ��Ϣ����ʹ�� MQTTAsync_connect() ����һ�� MQTT �ͻ���Ӧ�ó���ʱ���ͻ���ʹ�ÿͻ��˱�ʶ���ͷ�������ַ��ʶ�����ӡ�
-          * �������������ͻ��˵ĻỰ��Ϣ�Ƿ��Ѿ�����ǰ�����ӵ��������б��������������ǰ�ĻỰ��Ȼ���ڣ��� cleansession Ϊ�棬��ͻ��˺ͷ���������ǰ�ĻỰ��Ϣ�������
-          * ��� cleansession Ϊ�٣���ǰ�ĻỰ���ָ������û����ǰ�ĻỰ���Ϳ�ʼһ���µĻỰ��
+          * 当 cleansession 为真时，状态信息在连接和断开时被丢弃。将 cleansession 设置为假会保持状态
+          * 信息。当使用 MQTTAsync_connect() 连接一个 MQTT 客户端应用程序时，客户端使用客户端标识符和服务器地址来识别连接。
+          * 服务器检查这个客户端的会话信息是否已经从以前的连接到服务器中保存下来。如果以前的会话仍然存在，且 cleansession 为真，则客户端和服务器的以前的会话信息被清除。
+          * 如果 cleansession 为假，以前的会话被恢复。如果没有以前的会话，就开始一个新的会话。
           */
         bool clean_session_;
 
         /**
-          * ������˿���ͬʱ���е���Ϣ������
+          * 这控制了可以同时进行的消息数量。
           */
         int max_inflight_;
         
         /**
-          * ����������ӵ�ʱ����������Ϊ��λ����
+          * 允许完成连接的时间间隔（以秒为单位）。
           */
         int connect_timeout_;
 
         /**
-         * �� TCP �Ự�ڼ䣬δȷ�ϵķ��������ڶ���������ԡ�
-         * �� MQTT 3.1.1 ��֮��İ汾�У���������������ʱ��������Ҫ���ԡ�
-         * 0 �رջỰ�е����ԣ������Ƽ������á�
-         * ���Ѿ����ص���������������ֻ��Ӿ����⡣
+         * 在 TCP 会话期间，未确认的发布请求在多少秒后被重试。
+         * 在 MQTT 3.1.1 和之后的版本中，除非在重新连接时，否则不需要重试。
+         * 0 关闭会话中的重试，这是推荐的设置。
+         * 在已经过载的网络中增加重试只会加剧问题。
          */
         int request_retry_interval_;
 
         /**
-          * ������������ʹ�õ� MQTT �İ汾��
-          * MQTTVERSION_DEFAULT (0) = Ĭ�ϣ��� 3.1.1 ��ʼ�����ʧ�ܣ��˻ص� 3.1
-          * MQTTVERSION_3_1 (3) = ֻ���԰汾 3.1
-          * MQTTVERSION_3_1_1 (4) = ֻ���԰汾 3.1.1
+          * 设置在连接上使用的 MQTT 的版本。
+          * MQTTVERSION_DEFAULT (0) = 默认：从 3.1.1 开始，如果失败，退回到 3.1
+          * MQTTVERSION_3_1 (3) = 只尝试版本 3.1
+          * MQTTVERSION_3_1_1 (4) = 只尝试版本 3.1.1
           */
         int version_;
 
         /**
-          * �����Ӷ�ʧ��������Զ��������ӡ�
+          * 在连接丢失的情况下自动重新连接。
           */
         bool auto_reconnect_;
 
         /**
-          * ��С���Զ��������Լ��������Ϊ��λ��ÿ��ʧ�ܵ����Զ���ӱ���
+          * 最小的自动重连重试间隔，以秒为单位。每次失败的重试都会加倍。
           */
         int min_reconnect_interval_;
 
         /**
-          * �����Զ��������Լ��������Ϊ��λ��ʧ�ܵ����Բ����ټӱ���
+          * 最大的自动重连重试间隔，以秒为单位。失败的重试不会再加倍。
           */
         int max_reconnect_interval_;
         
         /*
-         * MQTT V5 �� cleanstart ��־��ֻ�ڻỰ��ʼʱ���״̬��
+         * MQTT V5 的 cleanstart 标志。只在会话开始时清除状态。
          */
         int cleanstart_v5_;
 
