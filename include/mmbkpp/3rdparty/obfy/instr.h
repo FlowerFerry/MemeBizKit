@@ -106,6 +106,7 @@ public:
     /* Construction, destruction */
     refholder() = delete;
     refholder(T& pv) : v(pv) {}
+    refholder(const refholder& ov) : v(ov.v) {}
     refholder(T&&) = delete;
 
     ~refholder() = default;
@@ -247,6 +248,7 @@ enum class next_step
 
 struct next_step_functor_base
 {
+    virtual ~next_step_functor_base() = default;
     virtual next_step run() = 0;
 };
 
@@ -262,6 +264,7 @@ private:
 
 struct bool_functor_base
 {
+    virtual ~bool_functor_base() = default;
     virtual bool run() = 0;
 };
 
@@ -277,6 +280,7 @@ private:
 
 struct any_functor_base
 {
+    virtual ~any_functor_base() = default;
     virtual void run(void*) const = 0;
 };
 
@@ -715,8 +719,8 @@ private:
 
 struct ObfZero { enum {value = 0}; };
 struct ObfOne { enum {value = 1}; };
-#define OBF_ZERO(t) template <> struct Num<t,0> final : public ObfZero { t v = value; };
-#define OBF_ONE(t) template <> struct Num<t,1> final : public ObfOne { t v = value; };
+#define OBF_ZERO(t) template <> struct Num<t,0> final : public ObfZero { t v = value; t get() const { return v;}; };
+#define OBF_ONE(t) template <> struct Num<t,1> final : public ObfOne { t v = value; t get() const { return v;}; };
 #define OBF_TYPE(t) OBF_ZERO(t) OBF_ONE(t)
 
 OBF_TYPE(bool)
@@ -809,7 +813,7 @@ DEFINE_EXTRA(2, extra_addition);
 #define REPEAT { std::shared_ptr<obf::base_rvholder> __rvlocal; obf::repeat_wrapper().set_body( [&]() {
 #define AS_LONG_AS(x) return __crv;}).set_condition([&]()->bool{ return ( (x) ); }).run(); }
 
-#define OBF_BEGIN try { obf::next_step __crv = obf::next_step::ns_done; std::shared_ptr<obf::base_rvholder> __rvlocal;
+#define OBF_BEGIN try { obf::next_step __crv = obf::next_step::ns_done; std::shared_ptr<obf::base_rvholder> __rvlocal; (void)__crv;
 #define OBF_END } catch(std::shared_ptr<obf::base_rvholder>& r) { return *r; } catch (...) {throw;}
 
 #define CASE(a) try { std::shared_ptr<obf::base_rvholder> __rvlocal;\
