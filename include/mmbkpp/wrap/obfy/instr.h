@@ -4,11 +4,37 @@
 
 #include <obfy/instr.h>
 
+#undef V
+#undef N
+#undef RETURN
+#undef BREAK
+#undef CONTINUE
+
+#undef IF
+#undef ELSE
+#undef ENDIF
+
+#undef FOR
+#undef ENDFOR
+
+#undef WHILE
+#undef ENDWHILE
+
+#undef REPEAT
+#undef AS_LONG_AS
+
+#undef CASE
+#undef ENDCASE
+
+#undef WHEN
+#undef DO
+#undef DONE
+#undef OR
+#undef DEFAULT
+
+#undef END
 
 #if defined OBF_DEBUG
-
-#define OBF_BEGIN
-#define OBF_END
 
 #define OBF_V(x) x
 #define OBF_N(x) x
@@ -42,12 +68,11 @@
 
 
 #else
+namespace obf {
+
 #define OBF_JOIN(a,b) a##b
 #define OBF_N(a) (obf::Num<decltype(a), obf::MetaRandom<__COUNTER__, 4096>::value ^ a>().get() ^ obf::MetaRandom<__COUNTER__ - 1, 4096>::value)
-#define OBF_DEFINE_EXTRA(N,implementer) template <typename T> struct extra_chooser<T,N> { using type = implementer<T>; }
-OBF_DEFINE_EXTRA(0, extra_xor);
-OBF_DEFINE_EXTRA(1, extra_substraction);
-OBF_DEFINE_EXTRA(2, extra_addition);
+
 #define OBF_V(a) ([&](){obf::extra_chooser<std::remove_reference<decltype(a)>::type, obf::MetaRandom<__COUNTER__, \
             MAX_BOGUS_IMPLEMENTATIONS>::value >::type OBF_JOIN(_ec_,__COUNTER__)(a);\
             return obf::stream_helper();}() << a)
@@ -57,14 +82,12 @@ OBF_DEFINE_EXTRA(2, extra_addition);
            [&](){inc;return __crv;}).set_body( [&]() {
 #define OBF_ENDFOR return __crv;}).run(); }
 
-#define OBF_END return __crv;}).run(); }
-
 #define OBF_IF(x) {std::shared_ptr<obf::base_rvholder> __rvlocal; obf::if_wrapper(( [&]()->bool{ return (x); })).set_then( [&]() {
 #define OBF_ELSE return __crv;}).set_else( [&]() {
-#define OBF_ENDIF END
+#define OBF_ENDIF return __crv;}).run(); }
 
 #define OBF_WHILE(x) {std::shared_ptr<obf::base_rvholder> __rvlocal; obf::while_wrapper([&]()->bool{ return (x); }).set_body( [&]() {
-#define OBF_ENDWHILE END
+#define OBF_ENDWHILE return __crv;}).run(); }
 
 #define OBF_BREAK __crv = obf::next_step::ns_break; throw __crv;
 #define OBF_CONTINUE __crv = obf::next_step::ns_continue; throw __crv;
@@ -88,34 +111,7 @@ OBF_DEFINE_EXTRA(2, extra_addition);
 #define OBF_OR join().
 #define OBF_DEFAULT add_default(obf::body([&](){
 
+} // namespace obf
 #endif
-
-#undef V
-#undef N
-#undef RETURN
-#undef BREAK
-#undef CONTINUE
-
-#undef IF
-#undef ELSE
-#undef ENDIF
-
-#undef FOR
-#undef ENDFOR
-
-#undef WHILE
-#undef ENDWHILE
-
-#undef REPEAT
-#undef AS_LONG_AS
-
-#undef CASE
-#undef ENDCASE
-
-#undef WHEN
-#undef DO
-#undef DONE
-#undef OR
-#undef DEFAULT
 
 #endif // !MMBKPP_WRAP_OBFY_INSTR_H_INCLUDED
