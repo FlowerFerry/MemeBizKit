@@ -11,6 +11,7 @@
 #include <megopp/util/simple_counter.h>
 #include <memepp/convert/std/string.hpp>
 #include <memepp/convert/fmt.hpp>
+#include <memepp/convert/common.hpp>
 
 #include <mutex>
 #include <atomic>

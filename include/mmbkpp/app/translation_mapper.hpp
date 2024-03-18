@@ -23,6 +23,8 @@
 #include <memepp/hash/std_hash.hpp>
 #include <megopp/util/scope_cleanup.h>
 #include <memepp/convert/fmt.hpp>
+#include <memepp/convert/std/string.hpp>
+#include <memepp/convert/common.hpp>
 #include <mmutilspp/fs/program_path.hpp>
 #include <rapidjson/document.h>
 #include <rapidjson/pointer.h>

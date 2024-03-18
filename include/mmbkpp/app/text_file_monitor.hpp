@@ -11,6 +11,7 @@
 #include <memepp/string_view.hpp>
 #include <memepp/hash/std_hash.hpp>
 #include <memepp/convert/std/string.hpp>
+#include <memepp/convert/common.hpp>
 #include <uvw/loop.h>
 #include <uvw/async.h>
 #include "uvw/fs.h"

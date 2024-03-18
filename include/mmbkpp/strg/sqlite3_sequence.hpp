@@ -17,6 +17,7 @@
 #include <memepp/convert/std/wstring.hpp>
 #include <memepp/convert/std/string.hpp>
 #include <memepp/convert/fmt.hpp>
+#include <memepp/convert/common.hpp>
 #include <memepp/string_view.hpp>
 #include <memepp/split/self.hpp>
 #include <memepp/native.hpp>

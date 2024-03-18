@@ -14,6 +14,7 @@
 #include <websocketpp/server.hpp>
 
 #include <memepp/convert/std/string.hpp>
+#include <memepp/convert/common.hpp>
 #include <megopp/memory/hashable_weak_ptr.hpp>
 #include <megopp/err/err.hpp>
 #include <mego/err/ec_impl.h>
