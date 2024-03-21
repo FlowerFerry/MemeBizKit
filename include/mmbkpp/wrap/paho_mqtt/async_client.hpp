@@ -369,7 +369,8 @@ protected:
 };
 
 uvbasic_client::uvbasic_client(const create_native_options& _opts)
-    : create_opts_(_opts)
+    : native_cli_(nullptr)
+    , create_opts_(_opts)
     , conn_opts_(_opts.raw().MQTTVersion)
     , disconn_opts_(_opts.raw().MQTTVersion)
 {
@@ -401,10 +402,8 @@ uvbasic_client::~uvbasic_client()
 inline mgpp::err uvbasic_client::set_conn_opts(const connect_options& _opts)
 {
     std::unique_lock<std::mutex> locker(mtx_);
-    if (!native_cli_)
-        return mgpp::err{ MGEC__PERM, "client not created" };
     
-    if (MQTTAsync_isConnected(native_cli_))
+    if (native_cli_ && MQTTAsync_isConnected(native_cli_))
         return mgpp::err{ MGEC__PERM, "already connected" };
     
     if (__auto_reconn_hdl_running_st())
