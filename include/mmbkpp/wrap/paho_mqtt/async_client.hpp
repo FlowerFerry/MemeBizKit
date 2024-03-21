@@ -309,7 +309,7 @@ protected:
     inline void _log(log_level _lvl, const char* _fmt)
     {
         if (log_cb_) {
-            log_cb_(weak_from_this(), _lvl, mm_from(_fmt));
+            log_cb_(weak_from_this(), _lvl, (_fmt));
         }
     }
 
@@ -401,6 +401,9 @@ uvbasic_client::~uvbasic_client()
 inline mgpp::err uvbasic_client::set_conn_opts(const connect_options& _opts)
 {
     std::unique_lock<std::mutex> locker(mtx_);
+    if (!native_cli_)
+        return mgpp::err{ MGEC__PERM, "client not created" };
+    
     if (MQTTAsync_isConnected(native_cli_))
         return mgpp::err{ MGEC__PERM, "already connected" };
     
@@ -494,6 +497,8 @@ inline mgpp::err uvbasic_client::send_message(const memepp::string& _destination
 
     std::unique_lock<std::mutex> locker(mtx_);
     auto hdl = native_cli_;
+    if (!hdl)
+        return mgpp::err{ MGEC__PERM, "client not created" };
     locker.unlock();
 
     int rc = 0;
@@ -520,6 +525,8 @@ inline mgpp::err uvbasic_client::subscribe(const memepp::string& _topic, int _qo
 
     std::unique_lock locker(mtx_);
     auto hdl = native_cli_;
+    if (!hdl)
+        return mgpp::err{ MGEC__PERM, "client not created" };
     locker.unlock();
 
     int rc = 0;
@@ -546,6 +553,8 @@ inline mgpp::err uvbasic_client::unsubscribe(const memepp::string& _topic, MQTTA
         
     std::unique_lock locker(mtx_);
     auto hdl = native_cli_;
+    if (!hdl)
+        return mgpp::err{ MGEC__PERM, "client not created" };
     locker.unlock();
 
     int rc = 0;
@@ -1316,7 +1325,7 @@ inline void uvbasic_client::on_destroy_async_call(uv_async_t* _handle)
         uv_close(reinterpret_cast<uv_handle_t*>(retry_connect_async_cancel_.get()), __on_retry_connect_cancel_close);
     }
 
-    if (MQTTAsync_isConnected(native_cli_)) {
+    //if (MQTTAsync_isConnected(native_cli_)) {
         //MQTTAsync_disconnectOptions opts = MQTTAsync_disconnectOptions_initializer;
         //opts.context = this;
         //opts.onSuccess;
@@ -1325,7 +1334,7 @@ inline void uvbasic_client::on_destroy_async_call(uv_async_t* _handle)
         //opts.onFailure5;
         //opts.timeout = 1000;
         //MQTTAsync_disconnect(native_cli_, &opts);
-    }
+    //}
 }
 
 inline void uvbasic_client::on_destroy_async_close(uv_handle_t* _handle)
@@ -1458,6 +1467,8 @@ inline mgpp::err uvbasic_client::__connect_mt()
 {
     std::unique_lock<std::mutex> locker(mtx_);
     auto hdl = native_cli_;
+    if (!hdl)
+        return mgpp::err{ MGEC__ALREADY, "already disconnected" };
     locker.unlock();
 
     if (connect_status_.value != connect_status::disconnected)
@@ -1478,6 +1489,8 @@ inline mgpp::err uvbasic_client::__disconnect_mt()
 {
     std::unique_lock<std::mutex> locker(mtx_);
     auto hdl = native_cli_;
+    if (hdl == nullptr)
+        return mgpp::err{ MGEC__ALREADY, "already disconnected" };
     locker.unlock();
 
     if (connect_status_.value != connect_status::connected)
