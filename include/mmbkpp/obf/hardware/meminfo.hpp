@@ -17,7 +17,7 @@ namespace obfhw  {
     struct meminfo_eval_conds : public basic_eval_conds 
     {
             
-            constexpr int member_count() const noexcept { return (sizeof(*this) / sizeof(double)) - 1; }
+            constexpr int member_count() const noexcept { return 3; }
     
             constexpr double total_weight() const noexcept 
             { 
@@ -39,9 +39,9 @@ namespace obfhw  {
                 return max_speed_weight / total_weight() * member_count();
             }
     
-            double type_weight = 1.0;
-            double total_size_weight = 1.0;
-            double max_speed_weight = 1.0;
+            int8_t type_weight = 100;
+            int8_t total_size_weight = 100;
+            int8_t max_speed_weight = 100;
     };
 
     struct meminfo 

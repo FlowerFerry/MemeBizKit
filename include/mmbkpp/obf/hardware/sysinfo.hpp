@@ -17,7 +17,7 @@ namespace obfhw  {
     struct sysinfo_eval_conds : public basic_eval_conds
     {
             
-            constexpr int member_count() const noexcept { return (sizeof(*this) / sizeof(double)) - 1; }
+            constexpr int member_count() const noexcept { return 4; }
     
             constexpr double total_weight() const noexcept 
             { 
@@ -44,10 +44,10 @@ namespace obfhw  {
                 return uuid_weight / total_weight() * member_count();
             }
     
-            double manufacturer_weight = 1.0;
-            double product_name_weight = 1.0;
-            double sn_weight = 1.0;
-            double uuid_weight = 1.0;
+            int8_t manufacturer_weight = 100;
+            int8_t product_name_weight = 100;
+            int8_t sn_weight = 100;
+            int8_t uuid_weight = 100;
     };
 
     struct sysinfo 

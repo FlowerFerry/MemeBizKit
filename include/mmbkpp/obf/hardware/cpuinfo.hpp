@@ -17,7 +17,7 @@ namespace obfhw  {
     struct cpuinfo_eval_conds : public basic_eval_conds
     {
 
-        constexpr int member_count() const noexcept { return (sizeof(*this) / sizeof(double)) - 1; }
+        constexpr int member_count() const noexcept { return 7; }
 
         constexpr double total_weight() const noexcept 
         { 
@@ -59,13 +59,13 @@ namespace obfhw  {
             return max_speed_weight / total_weight() * member_count();
         }
 
-        double sn_weight = 1.0;
-        double manufacturer_weight = 0.8;
-        double type_weight = 0.8;
-        double id_weight = 1.0;
-        double core_count_weight = 0.8;
-        double per_core_thread_count_weight = 0.8;
-        double max_speed_weight = 0.8;
+        int8_t sn_weight = 100;
+        int8_t manufacturer_weight = 80;
+        int8_t type_weight = 80;
+        int8_t id_weight = 100;
+        int8_t core_count_weight = 80;
+        int8_t per_core_thread_count_weight = 80;
+        int8_t max_speed_weight = 80;
     };
 
     struct cpuinfo 
