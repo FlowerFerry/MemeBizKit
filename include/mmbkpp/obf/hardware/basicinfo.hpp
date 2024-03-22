@@ -5,9 +5,10 @@
 #include <stdint.h>
 #include <variant>
 #include <string>
+#include <optional>
 
 namespace mmbkpp {
-namespace obfhw {
+namespace obfhw  {
     
     enum class info_type : uint8_t 
     {
@@ -25,6 +26,22 @@ namespace obfhw {
         uint64_t,
         int64_t
     >;
+
+    struct basic_eval_conds {
+        virtual ~basic_eval_conds() = default;
+    };
+
+    template<typename T>
+    inline bool is_equal(const std::optional<T>& _a, const std::optional<T>& _b) 
+    {
+        if (_a && _b) {
+            return _a.value() == _b.value();
+        }
+        if (!_a && !_b) {
+            return true;
+        }
+        return false;
+    }
 
 }
 } // namespace mmbkpp

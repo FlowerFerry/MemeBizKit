@@ -2,7 +2,7 @@
 #ifndef MMBKPP_WRAP_OBFY_INSTR_H_INCLUDED
 #define MMBKPP_WRAP_OBFY_INSTR_H_INCLUDED
 
-#include <obfy/instr.h>
+#include "../../thirdparty/obfy/instr.h"
 
 #undef V
 #undef N
