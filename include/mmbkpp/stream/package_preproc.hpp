@@ -9,7 +9,7 @@
 
 #include "../chrono/passive_timer.hpp"
 
-namespace mmupp {
+namespace mmbkpp {
 namespace stream {
 
     struct package_preproc
