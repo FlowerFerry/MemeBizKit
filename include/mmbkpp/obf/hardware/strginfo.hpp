@@ -17,7 +17,7 @@ namespace obfhw  {
     struct strginfo_eval_conds : public basic_eval_conds
     {
             
-            constexpr int member_count() const noexcept { return (sizeof(*this) / sizeof(double)) - 1; }
+            constexpr int member_count() const noexcept { return 2; }
     
             constexpr double total_weight() const noexcept 
             { 
@@ -34,8 +34,8 @@ namespace obfhw  {
                 return total_size_weight / total_weight() * member_count();
             }
     
-            double sn_weight = 1.0;
-            double total_size_weight = 1.0;
+            int8_t sn_weight = 100;
+            int8_t total_size_weight = 100;
     };
 
     struct strginfo 
