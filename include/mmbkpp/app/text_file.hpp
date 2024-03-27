@@ -134,7 +134,7 @@ namespace mmbkpp::app {
             }
         }
         
-        return deserialize<_Object>::deserialize(
+        return deserializer<_Object>::deserialize(
             std::string{ std::istreambuf_iterator<char>(ifs), std::istreambuf_iterator<char>() });
     }
     
