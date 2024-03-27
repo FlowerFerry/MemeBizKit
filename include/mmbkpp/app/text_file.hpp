@@ -83,16 +83,11 @@ namespace mmupp::app {
             return outcome::failure(mgpp::err{ MGEC__ERR });
         }
 
-        auto hdr = txtfile_handler<_Object>{};
         if (!ghc::filesystem::exists(path_))
         {
             if (auto_create_) {
-                auto obj = hdr.default_object();
+                auto obj = default_creator<_Object>::create();
                 
-                //auto res = hdr.serialize(obj);
-                //if (!res)
-                //    return res.error();
-
                 auto err = save(obj);
                 if (err)
                     return outcome::failure(err);
@@ -109,11 +104,7 @@ namespace mmupp::app {
         if (!ifs.is_open()) {
 
             if (auto_create_) {
-                auto obj = hdr.default_object();
-
-                //auto res = hdr.serialize(obj);
-                //if (!res)
-                //    return res.error();
+                auto obj = default_creator<_Object>::create();
 
                 auto err = save(obj);
                 if (err)
@@ -143,7 +134,7 @@ namespace mmupp::app {
             }
         }
         
-        return hdr.deserialize(
+        return deserialize<_Object>::deserialize(
             std::string{ std::istreambuf_iterator<char>(ifs), std::istreambuf_iterator<char>() });
     }
     
@@ -156,7 +147,7 @@ namespace mmupp::app {
             return mgpp::err{ MGEC__ERR };
         }
 
-        auto res = txtfile_handler<_Object>{}.serialize(_obj);
+        auto res = serializer<_Object>::serialize(_obj);
         if (!res) {
             return res.error();
         }
