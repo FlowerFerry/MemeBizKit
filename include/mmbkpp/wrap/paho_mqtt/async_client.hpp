@@ -359,6 +359,7 @@ protected:
     ssl_error_callback ssl_error_cb_;
     ssl_psk_callback ssl_psk_cb_;
 
+    megopp::auxiliary::null_mutex nullmtx_;
     mgpp::util::ref_counter<> handle_counter_;
     std::unique_ptr<uv_async_t> destroy_async_req_;
 
@@ -376,7 +377,7 @@ uvbasic_client::uvbasic_client(const create_native_options& _opts)
 {
     sizeof(*this);
     
-    handle_counter_.set_callback([this](auto&) 
+    handle_counter_.set_callback(nullmtx_, [this](auto&)
     {
         on_destroy();
     });
@@ -610,8 +611,8 @@ inline mgpp::err uvbasic_client::init(uv_loop_t* _loop)
     if (rc != MQTTASYNC_SUCCESS) {
         return mgpp::err{ MGEC__ERR, rc, "MQTTAsync_setConnectionLostCallback failed" };
     }
-
-    handle_counter_.set_count(4);
+    
+    handle_counter_.set_count(nullmtx_, 4);
 
     auto destroy_async_hdl = std::make_unique<uv_async_t>();
     uv_async_init(_loop, destroy_async_hdl.get(), __on_destroy_async_call);
@@ -1347,7 +1348,8 @@ inline void uvbasic_client::on_destroy_async_close(uv_handle_t* _handle)
     locker.unlock();
 
     auto self = self_;
-    --handle_counter_;
+    
+    handle_counter_.decrement(nullmtx_);
 }
 
 inline void uvbasic_client::on_retry_connect_async_call (uv_async_t* _handle)
@@ -1372,7 +1374,8 @@ inline void uvbasic_client::on_retry_connect_async_close(uv_handle_t* _handle)
     locker.unlock();
 
     auto self = self_;
-    --handle_counter_;
+    
+    handle_counter_.decrement(nullmtx_);
 }
 
 inline void uvbasic_client::on_retry_connect_cancel_call(uv_async_t* _handle)
@@ -1396,7 +1399,8 @@ inline void uvbasic_client::on_retry_connect_cancel_close(uv_handle_t* _handle)
     locker.unlock();
 
     auto self = self_;
-    --handle_counter_;
+    
+    handle_counter_.decrement(nullmtx_);
 }
 
 inline void uvbasic_client::on_retry_connect_timer_call (uv_timer_t* _handle)
@@ -1440,7 +1444,8 @@ inline void uvbasic_client::on_retry_connect_timer_close(uv_handle_t* _handle)
     retry_connect_timer_.reset();
 
     auto self = self_;
-    --handle_counter_;
+    
+    handle_counter_.decrement(nullmtx_);
 }
 
 inline void uvbasic_client::on_destroy()
