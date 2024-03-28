@@ -151,7 +151,7 @@ namespace stream {
     {
         *_offset = 0;
         if (recv_curr_cache_.empty()) {
-            if (_buf.size() < min_limit_package_size())
+            if (_buf.size() < mmint_t(min_limit_package_size()))
             {
                 head_matched_ = false;
                 recv_curr_cache_.append(_buf);
@@ -163,7 +163,7 @@ namespace stream {
             
             if (!head_match_.empty()) {
 
-                size_t index = 0;
+                mmint_t index = 0;
                 for (; index < _buf.size(); ++index)
                 {
                     if (_buf.at(index) == head_match_.at(0))
@@ -202,7 +202,7 @@ namespace stream {
             if (calc_len > max_limit_package_size())
                 return MGEC__PROTO;
 
-            if (_buf.size() < calc_len) {
+            if (_buf.size() < mmint_t(calc_len)) {
                 recv_curr_cache_.append(_buf);
                 *_offset = _buf.size();
                 if (!recv_wait_timer_.is_start())
@@ -226,7 +226,7 @@ namespace stream {
         else {
             if (!head_match_.empty() && !head_matched_) 
             {
-                size_t index = 0;
+                mmint_t index = 0;
                 for (; index < recv_curr_cache_.size(); ++index)
                 {
                     if (recv_curr_cache_.at(index) == head_match_.at(0))
@@ -262,7 +262,7 @@ namespace stream {
                 if (calc_len > max_limit_package_size())
                     return MGEC__PROTO;
 
-                if (recv_curr_cache_.size() + _buf.size() < calc_len) {
+                if (recv_curr_cache_.size() + _buf.size() < mmint_t(calc_len)) {
                     recv_curr_cache_.append(_buf);
                     *_offset = _buf.size();
                     if (!recv_wait_timer_.is_start())
