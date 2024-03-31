@@ -359,7 +359,7 @@ protected:
     ssl_error_callback ssl_error_cb_;
     ssl_psk_callback ssl_psk_cb_;
 
-    megopp::auxiliary::null_mutex nullmtx_;
+    megopp::help::null_mutex nullmtx_;
     mgpp::util::ref_counter<> handle_counter_;
     std::unique_ptr<uv_async_t> destroy_async_req_;
 
@@ -457,14 +457,14 @@ inline mgpp::err uvbasic_client::connect()
                 if (log_lvl_ <= log_level::trace)
                     _log(log_level::trace, 
                         "uvbasic_client({})::connect failed and run auto reconnect; code= {}; desc= {}", 
-                        create_opts_.client_id(), e.user_code(), e.message());
+                        create_opts_.client_id(), e.usercode(), e.message());
             }
             else {
                 locker.unlock();
                 if (log_lvl_ <= log_level::trace)
                     _log(log_level::trace, 
                         "uvbasic_client({})::connect failed and auto reconnect is not running; code= {}; desc= {}", 
-                        create_opts_.client_id(), e.user_code(), e.message());
+                        create_opts_.client_id(), e.usercode(), e.message());
             }
         }
         else {
@@ -1431,7 +1431,7 @@ inline void uvbasic_client::on_retry_connect_timer_call (uv_timer_t* _handle)
         cleanup.cancel();
         if (log_lvl_ <= log_level::trace)
             _log(log_level::trace, "uvbasic_client({})::on_retry_connect_timer_call; connect failed; code= {}; desc= {}",
-                create_opts_.client_id(), e.user_code(), e.message());
+                create_opts_.client_id(), e.usercode(), e.message());
     }
 }
 
