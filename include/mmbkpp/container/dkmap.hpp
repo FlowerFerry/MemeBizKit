@@ -8,35 +8,35 @@
 #include <unordered_set>
 #include <unordered_map>
 
-namespace mmbkpp {
-namespace container {
-
-    template<typename _FKty, typename _SKty>
-    struct dk
-    {
-        inline bool operator==(const dk& _Right) const noexcept
-        {
-            return fkey == _Right.fkey && skey == _Right.skey;
-        }
-
-        _FKty fkey;
-        _SKty skey;
-    };
-
-}
-}
-
-namespace std {
-    template<typename _FKty, typename _SKty>
-    struct hash<mmbkpp::container::dk<_FKty, _SKty>>
-    {
-        size_t operator()(const mmbkpp::container::dk<_FKty, _SKty>& _Keyval) const
-        {
-            return std::hash<_FKty>()(_Keyval.fkey) 
-                 ^ std::hash<_SKty>()(_Keyval.skey);
-        }
-    };
-}
+//namespace mmbkpp {
+//namespace container {
+//
+//    template<typename _FKty, typename _SKty>
+//    struct dk
+//    {
+//        inline bool operator==(const dk& _Right) const noexcept
+//        {
+//            return fkey == _Right.fkey && skey == _Right.skey;
+//        }
+//
+//        _FKty fkey;
+//        _SKty skey;
+//    };
+//
+//}
+//}
+//
+//namespace std {
+//    template<typename _FKty, typename _SKty>
+//    struct hash<mmbkpp::container::dk<_FKty, _SKty>>
+//    {
+//        size_t operator()(const mmbkpp::container::dk<_FKty, _SKty>& _Keyval) const
+//        {
+//            return std::hash<_FKty>()(_Keyval.fkey) 
+//                 ^ std::hash<_SKty>()(_Keyval.skey);
+//        }
+//    };
+//}
 
 namespace mmbkpp {
 namespace container {
@@ -45,15 +45,15 @@ namespace container {
         typename _FKty, 
         typename _SKty, 
         typename _Value,
-        typename _MHash = std::hash<dk<_FKty, _SKty>>,
+        typename _MHash = std::hash<std::pair<_FKty, _SKty>>,
         typename _FHash = std::hash<_FKty>,
-        typename _MAlloc = std::allocator<std::pair<const dk<_FKty, _SKty>, _Value>>,
-        typename _FAlloc = std::allocator<std::pair<const _FKty, std::unordered_set<dk<_FKty, _SKty>>>>
+        typename _MAlloc = std::allocator<std::pair<const std::pair<_FKty, _SKty>, _Value>>,
+        typename _FAlloc = std::allocator<std::pair<const _FKty, std::unordered_set<std::pair<_FKty, _SKty>>>>
     >
     class dkmap 
     {
     public:
-        using key_type = dk<_FKty, _SKty>;
+        using key_type = std::pair<_FKty, _SKty>;
         using map_type = std::unordered_map<key_type, _Value, _MHash, std::equal_to<key_type>, _MAlloc>;
         using fkm_type = std::unordered_map<_FKty, std::unordered_set<key_type>, _FHash, std::equal_to<_FKty>, _FAlloc>;
         using iterator = typename map_type::iterator;
