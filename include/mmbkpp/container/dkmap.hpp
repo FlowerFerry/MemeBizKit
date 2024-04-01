@@ -10,6 +10,7 @@
 namespace mmbkpp {
 namespace container {
 
+    template<typename _FKty, typename _SKty>
     struct dk
     {
         inline bool operator==(const dk& _Right) const noexcept
@@ -17,21 +18,21 @@ namespace container {
             return fkey == _Right.fkey && skey == _Right.skey;
         }
 
-        memepp::string fkey;
-        memepp::string skey;
+        _FKty fkey;
+        _SKty skey;
     };
 
 }
 }
 
 namespace std {
-    template<>
-    struct hash<mmbkpp::container::dk>
+    template<typename _FKty, typename _SKty>
+    struct hash<mmbkpp::container::dk<_FKty, _SKty>>
     {
-        size_t operator()(const mmbkpp::container::dk& _Keyval) const
+        size_t operator()(const mmbkpp::container::dk<_FKty, _SKty>& _Keyval) const
         {
-            return std::hash<memepp::string>()(_Keyval.fkey) 
-                 ^ std::hash<memepp::string>()(_Keyval.skey);
+            return std::hash<_FKty>()(_Keyval.fkey) 
+                 ^ std::hash<_SKty>()(_Keyval.skey);
         }
     };
 }
@@ -43,16 +44,16 @@ namespace container {
         typename _FKty, 
         typename _SKty, 
         typename _Value,
-        typename _MHash = std::hash<dk>,
+        typename _MHash = std::hash<dk<_FKty, _SKty>>,
         typename _FHash = std::hash<_FKty>,
-        typename _MAlloc = std::allocator<std::pair<const dk, _Value>>,
-        typename _FAlloc = std::allocator<std::pair<const _FKty, dk>>
+        typename _MAlloc = std::allocator<std::pair<const dk<_FKty, _SKty>, _Value>>,
+        typename _FAlloc = std::allocator<std::pair<const _FKty, dk<_FKty, _SKty>>>
     >
     class dkmap 
     {
     public:
-        using map_t = std::unordered_map<dk, _Value, _MHash, std::equal_to<dk>, _MAlloc>;
-        using fk_t  = std::unordered_map<_FKty, dk, _FHash, std::equal_to<_FKty>, _FAlloc>;
+        using map_t = std::unordered_map<dk<_FKty, _SKty>, _Value, _MHash, std::equal_to<dk>, _MAlloc>;
+        using fk_t  = std::unordered_map<_FKty, dk<_FKty, _SKty>, _FHash, std::equal_to<_FKty>, _FAlloc>;
         using iterator = typename map_t::iterator;
         using const_iterator = typename map_t::const_iterator;
 
