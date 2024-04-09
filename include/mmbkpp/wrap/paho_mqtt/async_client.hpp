@@ -1445,7 +1445,7 @@ inline void uvbasic_client::on_retry_connect_timer_close(uv_handle_t* _handle)
 
     auto self = self_;
     
-    handle_counter_.decrement(nullmtx_);
+    handle_counter_.decrement();
 }
 
 inline void uvbasic_client::on_destroy()
