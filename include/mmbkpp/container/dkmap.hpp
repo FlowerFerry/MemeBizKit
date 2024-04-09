@@ -8,35 +8,16 @@
 #include <unordered_set>
 #include <unordered_map>
 
-//namespace mmbkpp {
-//namespace container {
-//
-//    template<typename _FKty, typename _SKty>
-//    struct dk
-//    {
-//        inline bool operator==(const dk& _Right) const noexcept
-//        {
-//            return fkey == _Right.fkey && skey == _Right.skey;
-//        }
-//
-//        _FKty fkey;
-//        _SKty skey;
-//    };
-//
-//}
-//}
-//
-//namespace std {
-//    template<typename _FKty, typename _SKty>
-//    struct hash<mmbkpp::container::dk<_FKty, _SKty>>
-//    {
-//        size_t operator()(const mmbkpp::container::dk<_FKty, _SKty>& _Keyval) const
-//        {
-//            return std::hash<_FKty>()(_Keyval.fkey) 
-//                 ^ std::hash<_SKty>()(_Keyval.skey);
-//        }
-//    };
-//}
+namespace std {
+    template<>
+    struct hash<std::pair<memepp::string, memepp::string>>
+    {
+        size_t operator()(const std::pair<memepp::string, memepp::string>& key) const
+        {
+            return std::hash<memepp::string>()(key.first) ^ std::hash<memepp::string>()(key.second);
+        }
+    };
+}
 
 namespace mmbkpp {
 namespace container {
@@ -128,7 +109,7 @@ namespace container {
         {
             auto it = maps_.insert({ _Keyval, _Val });
             if (it.second) {
-                fkms_[_Keyval.fkey].insert(_Keyval); 
+                fkms_[_Keyval.first].insert(_Keyval); 
             }
             return it.first;
         }
