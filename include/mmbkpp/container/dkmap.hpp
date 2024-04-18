@@ -8,32 +8,13 @@
 #include <unordered_set>
 #include <unordered_map>
 
-namespace mmbkpp {
-namespace container {
-
-    template<typename _FKty, typename _SKty>
-    struct dk
-    {
-        inline bool operator==(const dk& _Right) const noexcept
-        {
-            return fkey == _Right.fkey && skey == _Right.skey;
-        }
-
-        _FKty fkey;
-        _SKty skey;
-    };
-
-}
-}
-
 namespace std {
-    template<typename _FKty, typename _SKty>
-    struct hash<mmbkpp::container::dk<_FKty, _SKty>>
+    template<>
+    struct hash<std::pair<memepp::string, memepp::string>>
     {
-        size_t operator()(const mmbkpp::container::dk<_FKty, _SKty>& _Keyval) const
+        size_t operator()(const std::pair<memepp::string, memepp::string>& key) const
         {
-            return std::hash<_FKty>()(_Keyval.fkey) 
-                 ^ std::hash<_SKty>()(_Keyval.skey);
+            return std::hash<memepp::string>()(key.first) ^ std::hash<memepp::string>()(key.second);
         }
     };
 }
@@ -45,18 +26,19 @@ namespace container {
         typename _FKty, 
         typename _SKty, 
         typename _Value,
-        typename _MHash = std::hash<dk<_FKty, _SKty>>,
+        typename _MHash = std::hash<std::pair<_FKty, _SKty>>,
         typename _FHash = std::hash<_FKty>,
-        typename _MAlloc = std::allocator<std::pair<const dk<_FKty, _SKty>, _Value>>,
-        typename _FAlloc = std::allocator<std::pair<const _FKty, std::unordered_set<dk<_FKty, _SKty>>>>
+        typename _MAlloc = std::allocator<std::pair<const std::pair<_FKty, _SKty>, _Value>>,
+        typename _FAlloc = std::allocator<std::pair<const _FKty, std::unordered_set<std::pair<_FKty, _SKty>>>>
     >
     class dkmap 
     {
     public:
-        using map_t = std::unordered_map<dk<_FKty, _SKty>, _Value, _MHash, std::equal_to<dk>, _MAlloc>;
-        using fk_t  = std::unordered_map<_FKty, std::unordered_set<dk<_FKty, _SKty>>, _FHash, std::equal_to<_FKty>, _FAlloc>;
-        using iterator = typename map_t::iterator;
-        using const_iterator = typename map_t::const_iterator;
+        using key_type = std::pair<_FKty, _SKty>;
+        using map_type = std::unordered_map<key_type, _Value, _MHash, std::equal_to<key_type>, _MAlloc>;
+        using fkm_type = std::unordered_map<_FKty, std::unordered_set<key_type>, _FHash, std::equal_to<_FKty>, _FAlloc>;
+        using iterator = typename map_type::iterator;
+        using const_iterator = typename map_type::const_iterator;
 
         inline bool empty() const noexcept
         {
@@ -71,12 +53,17 @@ namespace container {
         inline void clear() noexcept
         {
             maps_.clear();
-            fks_.clear();
+            fkms_.clear();
         }
 
-        inline bool contains(const dk& _Keyval) const noexcept
+        inline bool contains(const key_type& _Keyval) const noexcept
         {
             return maps_.find(_Keyval) != maps_.end();
+        }
+        
+        inline bool contains(const _FKty& _Fkey, const _SKty& _Skey) const noexcept
+        {
+            return contains({ _Fkey, _Skey });
         }
 
         inline iterator begin() noexcept
@@ -99,46 +86,46 @@ namespace container {
             return maps_.end();
         }
 
-        inline iterator find(const dk& _Keyval) noexcept
+        inline iterator find(const key_type& _Keyval) noexcept
         {
             return maps_.find(_Keyval);
         }
 
-        inline const_iterator find(const dk& _Keyval) const noexcept
+        inline const_iterator find(const key_type& _Keyval) const noexcept
         {
             return maps_.find(_Keyval);
         }
 
-        inline iterator erase(const dk& _Keyval) noexcept
+        inline iterator erase(const key_type& _Keyval) noexcept
         {
             auto it = maps_.find(_Keyval);
             if (it != maps_.end()) {
-                fks_[_Keyval.fkey].erase(_Keyval);
+                fkms_[_Keyval.fkey].erase(_Keyval);
                 return maps_.erase(it);
             }
         }
 
-        inline iterator insert(const dk& _Keyval, const _Value& _Val) noexcept
+        inline iterator insert(const key_type& _Keyval, const _Value& _Val) noexcept
         {
             auto it = maps_.insert({ _Keyval, _Val });
             if (it.second) {
-                fks_[_Keyval.fkey].insert(_Keyval); 
+                fkms_[_Keyval.first].insert(_Keyval); 
             }
             return it.first;
         }
 
         inline iterator insert(const _FKty& _Keyval1, const _SKty& _Keyval2, const _Value& _Val) noexcept
         {
-            dk keyval = { _Keyval1, _Keyval2 };
+            key_type keyval = { _Keyval1, _Keyval2 };
             auto it = maps_.insert({ keyval, _Val });
             if (it.second)
-                fks_[_Keyval1].insert(keyval);
+                fkms_[_Keyval1].insert(keyval);
             return it.first;
         }
 
     private:
-        map_t maps_;
-        fk_t  fks_;
+        map_type maps_;
+        fkm_type fkms_;
     };
 
 }
