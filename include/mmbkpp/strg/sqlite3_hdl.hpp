@@ -249,6 +249,8 @@ inline outcome::checked<std::unique_ptr<sqlite3_hdl>, mgpp::err>
     int rc = ::sqlite3_open_v2(filename, &hdl, flags, nullptr);
     if (MEGO_SYMBOL__LIKELY(rc == SQLITE_OK))
         return take(hdl);
+
+    ::sqlite3_close(hdl);
     return mgpp::err{ mgec__from_sqlite3_err(rc) };
 }
 
@@ -259,6 +261,8 @@ inline outcome::checked<std::shared_ptr<sqlite3_hdl>, mgpp::err>
     int rc = ::sqlite3_open_v2(filename, &hdl, flags, nullptr);
     if (MEGO_SYMBOL__LIKELY(rc == SQLITE_OK))
         return take_to_shared(hdl);
+    
+    ::sqlite3_close(hdl);
     return mgpp::err{ mgec__from_sqlite3_err(rc) };
 }
 
