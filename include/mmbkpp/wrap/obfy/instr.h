@@ -73,7 +73,7 @@ namespace obf {
 #define OBF_JOIN(a,b) a##b
 #define OBF_N(a) (obf::Num<decltype(a), obf::MetaRandom<__COUNTER__, 4096>::value ^ a>().get() ^ obf::MetaRandom<__COUNTER__ - 1, 4096>::value)
 
-#define OBF_V(a) ([&](){obf::extra_chooser<std::remove_reference<decltype(a)>::type, obf::MetaRandom<__COUNTER__, \
+#define OBF_V(a) ([&](){typename obf::extra_chooser<typename std::remove_reference<decltype(a)>::type, obf::MetaRandom<__COUNTER__, \
             MAX_BOGUS_IMPLEMENTATIONS>::value >::type OBF_JOIN(_ec_,__COUNTER__)(a);\
             return obf::stream_helper();}() << a)
 

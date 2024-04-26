@@ -12,10 +12,11 @@
 #include <memepp/hash/std_hash.hpp>
 #include <memepp/convert/std/string.hpp>
 #include <memepp/convert/common.hpp>
-#include <uvw/loop.h>
-#include <uvw/async.h>
-#include "uvw/fs.h"
-#include "uvw/fs_event.h"
+#include <mmbkpp/wrap/uvw/loop.h>
+#include <mmbkpp/wrap/uvw/async.h>
+#include <mmbkpp/wrap/uvw/fs.h>
+#include <mmbkpp/wrap/uvw/fs_event.h>
+#include <mmbkpp/wrap/uvw/uv_type.h>
 #include "uvw/fs_poll.h"
 #include <ghc/filesystem.hpp>
 
@@ -258,7 +259,7 @@ namespace mmbkpp::app {
                 return;
             }
 
-            file_ = _handle.loop().resource<uvw::FileReq>();
+            file_ = get_uvw_loop(_handle).resource<uvw::FileReq>();
             file_->on<uvw::ErrorEvent>([this](const uvw::ErrorEvent& _ev, uvw::FileReq&) 
             {
 				file_->close();

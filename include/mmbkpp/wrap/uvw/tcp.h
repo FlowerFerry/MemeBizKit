@@ -7,7 +7,7 @@
 
 #ifndef MMBKPP_WRAP_UVW_3_0_AFTER_DISABLED
 namespace uvw {
-    using TcpHandle = tcp_handle;
+    using TCPHandle = tcp_handle;
     
 }
 #endif

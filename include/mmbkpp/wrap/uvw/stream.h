@@ -7,6 +7,8 @@
 
 #ifndef MMBKPP_WRAP_UVW_3_0_AFTER_DISABLED
 namespace uvw {
+    
+    using ConnectEvent = connect_event;
     using DataEvent = data_event;
     using EndEvent = end_event;
     using WriteEvent = write_event;
