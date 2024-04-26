@@ -494,7 +494,7 @@ inline mgpp::err sqlite3_sequence::set_dir_path_and_move(const memepp::string& _
                 if (!ghc::filesystem::exists(index_iter->path()))
                     continue;
 
-                std::error_code ecode;
+                //std::error_code ecode;
                 ghc::filesystem::rename(
                     index_iter->path(),
                     fmt::format("{}/{}", dst_index_path, index_iter->path().filename().string()), ecode);
@@ -767,7 +767,7 @@ inline mgpp::err sqlite3_sequence::copy_all_to_path(const memepp::string& _path)
                     continue;
                 }
 
-                std::error_code ecode;
+                //std::error_code ecode;
                 ghc::filesystem::copy_file(
                     index_iter->path(),
                     fmt::format("{}/{}", dst_index_path, index_iter->path().filename().string()), 
@@ -804,7 +804,7 @@ inline mgpp::err sqlite3_sequence::copy_all_to_path(const memepp::string& _path)
             index_locker.unlock();
 
             if (!node_info) {
-                std::error_code ecode;
+                //std::error_code ecode;
                 ghc::filesystem::copy_file(
                     index_iter->path(),
                     fmt::format("{}/{}", dst_index_path, index_iter->path().filename().string()), 
@@ -838,7 +838,7 @@ inline mgpp::err sqlite3_sequence::copy_all_to_path(const memepp::string& _path)
                 node_locker.unlock();
             } while (0);
 
-            std::error_code ecode;
+            //std::error_code ecode;
             ghc::filesystem::copy_file(
                 index_iter->path(),
                 fmt::format("{}/{}", dst_index_path, node_name),
@@ -1310,7 +1310,7 @@ outcome::checked<sqlite3_sequence::count_t, mgpp::err>
         if (iit == index_infos_.end()) {
             locker.unlock();
             for (auto node_id : nodes) {
-                std::error_code ecode;
+                //std::error_code ecode;
                 ghc::filesystem::remove(mm_to<memepp::native_string>(filepath(index_id, node_id)), ecode);
                 ++count;
             }
@@ -1324,7 +1324,7 @@ outcome::checked<sqlite3_sequence::count_t, mgpp::err>
         {
             auto nit = index_info->nodes_.find(node_id);
             if (nit == index_info->nodes_.end()) {
-                std::error_code ecode;
+                //std::error_code ecode;
                 ghc::filesystem::remove(mm_to<memepp::native_string>(filepath(index_id, node_id)), ecode);
                 ++count;
                 continue;
@@ -1351,7 +1351,7 @@ outcome::checked<sqlite3_sequence::count_t, mgpp::err>
                 node_locker.unlock();
             } while (0);
 
-            std::error_code ecode;
+            //std::error_code ecode;
             auto native_fpath = mm_to<memepp::native_string>(fpath);
             if (ghc::filesystem::exists(native_fpath, ecode) && !ecode)
             {
