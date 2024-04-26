@@ -259,7 +259,7 @@ namespace mmbkpp::app {
                 return;
             }
 
-            file_ = get_uvw_loop(_handle).resource<uvw::FileReq>();
+            file_ = uvw_get_loop(_handle).resource<uvw::FileReq>();
             file_->on<uvw::ErrorEvent>([this](const uvw::ErrorEvent& _ev, uvw::FileReq&) 
             {
 				file_->close();

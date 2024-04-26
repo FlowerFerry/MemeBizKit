@@ -13,9 +13,18 @@ namespace uvw {
 #endif
 
 namespace mmbkpp {
+    inline bool uvw_set_keep_alive(uvw::TCPHandle& _hdl, bool _enable, std::chrono::duration<unsigned int> _val)
+    {
+#ifndef MMBKPP_WRAP_UVW_3_0_AFTER_DISABLED 
+        return _hdl.keep_alive(_enable, _val);
+#else
+        return _hdl.keepAlive(_enable, _val);
+#endif
+    }
+
     inline int uvw_bind_ipv4only(uvw::TCPHandle& _hdl, const std::string& _host, unsigned _port)
     {
-#ifndef MMBKPP_WRAP_UVW_3_0_AFTER_DISABLED        
+#ifndef MMBKPP_WRAP_UVW_3_0_AFTER_DISABLED
         sockaddr_storage storage;
         memset(&storage, 0, sizeof(storage));
         if (uv_ip4_addr(_host.data(), _port, (sockaddr_in*)&storage) == 0)
