@@ -2,7 +2,7 @@
 #ifndef MMBKPP_WRAP_UVW_EMITTER_FWD_H_INCLUDED
 #define MMBKPP_WRAP_UVW_EMITTER_FWD_H_INCLUDED
 
-#ifndef MMBKPP_WRAP_UVW_3_0_AFTER_DISABLED
+#ifndef MMBKPP_WRAP_UVW_3_0_DISABLED
 namespace uvw {
     struct error_event;
     using ErrorEvent = error_event;

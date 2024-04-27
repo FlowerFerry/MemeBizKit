@@ -4,7 +4,7 @@
 
 #include <uvw/fs_event.h>
 
-#ifndef MMBKPP_WRAP_UVW_3_0_AFTER_DISABLED
+#ifndef MMBKPP_WRAP_UVW_3_0_DISABLED
 namespace uvw {
     using FsEventHandle = fs_event_handle;
     using FsEventEvent  = fs_event_event;

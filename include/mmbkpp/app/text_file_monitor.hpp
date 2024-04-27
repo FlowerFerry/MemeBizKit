@@ -17,7 +17,6 @@
 #include <mmbkpp/wrap/uvw/fs.h>
 #include <mmbkpp/wrap/uvw/fs_event.h>
 #include <mmbkpp/wrap/uvw/uv_type.h>
-#include "uvw/fs_poll.h"
 #include <ghc/filesystem.hpp>
 
 namespace mmbkpp::app {
@@ -253,6 +252,7 @@ namespace mmbkpp::app {
     {
         auto path = _handle.path();
 
+#ifdef MMBKPP_WRAP_UVW_3_0_DISABLED
         if (_event.flags & uvw::Flags<uvw::FsEventHandle::Event>(uvw::FsEventHandle::Event::STAT))
         {
             if (file_) {
@@ -294,6 +294,50 @@ namespace mmbkpp::app {
 
 			file_->open(path, uvw::FileReq::FileOpen::RDONLY, 0);
         }
+#else
+        if (_event.flags == uvw::fs_event_handle::watch::CHANGE)
+        {
+            if (file_) {
+                return;
+            }
+            file_ = mmbkpp::uvw_get_loop(_handle).resource<uvw::FileReq>();
+            file_->on< uvw::FsEvent >([this](const uvw::FsEvent& _event, uvw::FileReq& _handle)
+            {
+                if (_event.type == uvw::fs_req::fs_type::OPEN)
+                {
+                    _handle.stat();
+                }
+                else if (_event.type == uvw::fs_req::fs_type::READ)
+                {
+                    auto data = mm_view(_ev.data.get(), _ev.size);
+                    __on_file_changed(data);
+
+                    _handle.close();
+                }
+                else if (_event.type == uvw::fs_req::fs_type::FSTAT)
+                {
+                    auto size = _ev.stat.st_size;
+                    if (size >= 0 && size < max_file_size_) {
+                        _handle.read(0, (uint32_t)size);
+                    }
+                    else {
+                        _handle.close();
+                    }
+                }
+                else if (_event.type == uvw::fs_req::fs_type::CLOSE)
+                {
+                    file_.reset();
+                }
+            });
+
+            file_->on<uvw::ErrorEvent>([this](const uvw::ErrorEvent& _err, uvw::FileReq& _handle)
+            {
+                _handle.close();
+            });
+            
+            file_->open(path, uvw::file_req::file_open_flags::RDONLY, 0);
+        }
+#endif
     }
 
     template<typename _Object>

@@ -3,7 +3,7 @@
 #define MMBKPP_WRAP_UVW_ASYNC_FWD_H_INCLUDED
 
 
-#ifdef MMBKPP_WRAP_UVW_3_0_AFTER_DISABLED
+#ifdef MMBKPP_WRAP_UVW_3_0_DISABLED
 namespace uvw {
     class AsyncHandle;
 }

@@ -4,7 +4,7 @@
 
 #include <uvw/dns.h>
 
-#ifndef MMBKPP_WRAP_UVW_3_0_AFTER_DISABLED
+#ifndef MMBKPP_WRAP_UVW_3_0_DISABLED
 namespace uvw {
     using GetAddrInfoReq = get_addr_info_req;
     using AddrInfoEvent  = addr_info_event;

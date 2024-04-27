@@ -4,7 +4,7 @@
 
 #include <uvw/loop.h>
 
-#ifdef MMBKPP_WRAP_UVW_3_0_AFTER_DISABLED
+#ifdef MMBKPP_WRAP_UVW_3_0_DISABLED
 namespace mmbkpp {
     template<typename _Ty>
     inline uvw::loop& uvw_get_loop(const uvw::uv_type<_Ty>& _handle) noexcept

@@ -3,7 +3,7 @@
 #define MMBKPP_WRAP_UVW_TCP_FWD_H_INCLUDED
 
 namespace uvw {
-#ifdef MMBKPP_WRAP_UVW_3_0_AFTER_DISABLED
+#ifdef MMBKPP_WRAP_UVW_3_0_DISABLED
     class TCPHandle;
 #else
     class tcp_handle;

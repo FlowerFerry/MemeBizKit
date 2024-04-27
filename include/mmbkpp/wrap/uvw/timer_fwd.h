@@ -5,7 +5,7 @@
 #include "emitter_fwd.h"
 
 namespace uvw {
-#ifdef MMBKPP_WRAP_UVW_3_0_AFTER_DISABLED
+#ifdef MMBKPP_WRAP_UVW_3_0_DISABLED
     class TimerHandle;
     struct TimerEvent;
 #else

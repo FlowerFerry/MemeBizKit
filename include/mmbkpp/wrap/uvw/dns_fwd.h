@@ -2,7 +2,7 @@
 #ifndef MMBKPP_WRAP_UVW_DNS_FWD_H_INCLUDED
 #define MMBKPP_WRAP_UVW_DNS_FWD_H_INCLUDED
 
-#ifdef MMBKPP_WRAP_UVW_3_0_AFTER_DISABLED
+#ifdef MMBKPP_WRAP_UVW_3_0_DISABLED
 namespace uvw {
     class GetAddrInfoReq;
     struct AddrInfoEvent;

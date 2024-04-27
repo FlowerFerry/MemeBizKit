@@ -5,7 +5,7 @@
 #include <uvw/timer.h>
 #include "handle.h"
 
-#ifndef MMBKPP_WRAP_UVW_3_0_AFTER_DISABLED
+#ifndef MMBKPP_WRAP_UVW_3_0_DISABLED
 namespace uvw {
     using TimerHandle = timer_handle;
     using TimerEvent  = timer_event;

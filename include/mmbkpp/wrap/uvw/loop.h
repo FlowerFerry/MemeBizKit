@@ -5,7 +5,7 @@
 #include <uvw/loop.h>
 #include "emitter.h"
 
-#ifndef MMBKPP_WRAP_UVW_3_0_AFTER_DISABLED
+#ifndef MMBKPP_WRAP_UVW_3_0_DISABLED
 namespace uvw {
     using Loop = loop;
 }
