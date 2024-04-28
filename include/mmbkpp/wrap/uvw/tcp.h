@@ -5,6 +5,8 @@
 #include <uvw/tcp.h>
 #include "stream.h"
 
+#include <string.h>
+
 #ifndef MMBKPP_WRAP_UVW_3_0_DISABLED
 namespace uvw {
     using TCPHandle = tcp_handle;

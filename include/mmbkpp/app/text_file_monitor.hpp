@@ -155,7 +155,11 @@ namespace mmbkpp::app {
         {
         });
 
+#ifdef MMBKPP_WRAP_UVW_3_0_DISABLED
         fs_ev_->start(path, uvw::FsEventHandle::Event::STAT);
+#else
+        fs_ev_->start(path, uvw::fs_event_handle::event_flags::STAT);
+#endif
 
         locker.lock();
         if (internal_loop_) {
@@ -301,20 +305,20 @@ namespace mmbkpp::app {
                 return;
             }
             file_ = mmbkpp::uvw_get_loop(_handle).resource<uvw::FileReq>();
-            file_->on< uvw::FsEvent >([this](const uvw::FsEvent& _event, uvw::FileReq& _handle)
+            file_->on< uvw::FsEvent >([this](const uvw::FsEvent& _ev, uvw::FileReq& _handle)
             {
-                if (_event.type == uvw::fs_req::fs_type::OPEN)
+                if (_ev.type == uvw::fs_req::fs_type::OPEN)
                 {
                     _handle.stat();
                 }
-                else if (_event.type == uvw::fs_req::fs_type::READ)
+                else if (_ev.type == uvw::fs_req::fs_type::READ)
                 {
-                    auto data = mm_view(_ev.data.get(), _ev.size);
+                    auto data = mm_view(_ev.read.data.get(), _ev.result);
                     __on_file_changed(data);
 
                     _handle.close();
                 }
-                else if (_event.type == uvw::fs_req::fs_type::FSTAT)
+                else if (_ev.type == uvw::fs_req::fs_type::FSTAT)
                 {
                     auto size = _ev.stat.st_size;
                     if (size >= 0 && size < max_file_size_) {
@@ -324,7 +328,7 @@ namespace mmbkpp::app {
                         _handle.close();
                     }
                 }
-                else if (_event.type == uvw::fs_req::fs_type::CLOSE)
+                else if (_ev.type == uvw::fs_req::fs_type::CLOSE)
                 {
                     file_.reset();
                 }
