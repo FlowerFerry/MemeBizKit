@@ -90,6 +90,12 @@ namespace stream {
             return max_limit_package_size_;
         }
         
+        inline void clear_recv_cache() noexcept
+        {
+            recv_wait_cache_.clear();
+            recv_curr_cache_.clear();
+        }
+
         mmint_t poll_check(mgu_timestamp_t _now) const;
         mgec_t  poll(mgu_timestamp_t _now);
 
