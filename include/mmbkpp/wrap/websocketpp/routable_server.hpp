@@ -1,4 +1,4 @@
-
+﻿
 #ifndef MMBKPP_WRAP_WSPP_ROUTABLE_SERVER_HPP_INCLUDED
 #define MMBKPP_WRAP_WSPP_ROUTABLE_SERVER_HPP_INCLUDED
 
@@ -55,7 +55,7 @@ public:
     routable_server& http_get (std::string const& _pattern, websocketpp::http_handler const& _handler);
 
 private:
-    struct ws_callbacks 
+    struct ws_cb_registry
     {
         websocketpp::ping_handler         ping_handler;
         websocketpp::pong_handler         pong_handler;
@@ -67,7 +67,7 @@ private:
         websocketpp::validate_handler     validate_handler;
         typename websocketpp::connection<Config>::message_handler message_handler;
     };
-    using ws_callbacks_ptr = std::shared_ptr<ws_callbacks>;
+    using ws_cb_registry_ptr = std::shared_ptr<ws_cb_registry>;
 
     struct ws_conn_parameter
     {
@@ -78,8 +78,9 @@ private:
     using ws_conn_param_ptr = std::shared_ptr<ws_conn_parameter>;
 
     using http_handler_ptr = std::shared_ptr<websocketpp::http_handler>;
+    
     using http_handlers = std::vector<std::tuple<std::regex, http_handler_ptr>>;
-    using ws_handlers = std::vector<std::tuple<std::regex, ws_callbacks_ptr>>;
+    using ws_handlers = std::vector<std::tuple<std::regex, ws_cb_registry_ptr>>;
 
     bool __on_ping        (const websocketpp::connection_hdl & _hdl, const std::string& _payload);
     void __on_pong        (const websocketpp::connection_hdl & _hdl, const std::string& _payload);
@@ -95,8 +96,8 @@ private:
 
     bool __dispatch_request(const websocketpp::connection_hdl & _hdl, http_handlers& _handlers);
 
-    ws_callbacks_ptr __get_callbacks(const std::string& _pattern) const;
-    ws_callbacks_ptr __get_callbacks(const websocketpp::connection_hdl& _hdl);
+    ws_cb_registry_ptr __get_callbacks_registry(const std::string& _pattern) const;
+    ws_cb_registry_ptr __get_callbacks_registry(const websocketpp::connection_hdl& _hdl);
 
     websocketpp::server<Config> server_;
     mutable std::mutex mutex_;
@@ -105,7 +106,7 @@ private:
     int port_ = -1;
 
     ws_handlers ws_handlers_;
-    std::unordered_map<mgpp::mem::hashable_weak_ptr<void>, ws_callbacks_ptr> ws_cbs_table_;
+    std::unordered_map<mgpp::mem::hashable_weak_ptr<void>, ws_cb_registry_ptr> ws_cb_registry_table_;
     std::unordered_map<mgpp::mem::hashable_weak_ptr<void>, ws_conn_param_ptr> ws_conns_;
 
     http_handlers http_post_handlers_;
@@ -276,7 +277,7 @@ inline routable_server<Config>& routable_server<Config>::http_get(std::string co
 template <typename Config>
 inline bool routable_server<Config>::__on_ping(const websocketpp::connection_hdl& _hdl, const std::string& _payload)
 {
-    auto callbacks = __get_callbacks(_hdl);
+    auto callbacks = __get_callbacks_registry(_hdl);
     if (!callbacks) {
         return true;
     }
@@ -297,7 +298,7 @@ inline bool routable_server<Config>::__on_ping(const websocketpp::connection_hdl
 template <typename Config>
 inline void routable_server<Config>::__on_pong(const websocketpp::connection_hdl& _hdl, const std::string& _payload)
 {
-    auto callbacks = __get_callbacks(_hdl);
+    auto callbacks = __get_callbacks_registry(_hdl);
     if (!callbacks) {
         return ;
     }
@@ -316,7 +317,7 @@ inline void routable_server<Config>::__on_pong(const websocketpp::connection_hdl
 template <typename Config>
 inline void routable_server<Config>::__on_pong_timeout(const websocketpp::connection_hdl& _hdl, const std::string& _payload)
 {
-    auto callbacks = __get_callbacks(_hdl);
+    auto callbacks = __get_callbacks_registry(_hdl);
     if (!callbacks) {
         return ;
     }
@@ -335,7 +336,7 @@ inline void routable_server<Config>::__on_pong_timeout(const websocketpp::connec
 template <typename Config>
 inline void routable_server<Config>::__on_open(const websocketpp::connection_hdl& _hdl)
 {    
-    auto callbacks = __get_callbacks(_hdl);
+    auto callbacks = __get_callbacks_registry(_hdl);
     if (!callbacks) {
         server_.close(_hdl, websocketpp::close::status::policy_violation, "not found path");
         return ;
@@ -363,7 +364,7 @@ inline void routable_server<Config>::__on_open(const websocketpp::connection_hdl
 template <typename Config>
 inline void routable_server<Config>::__on_close(const websocketpp::connection_hdl& _hdl)
 {
-    auto callbacks = __get_callbacks(_hdl);
+    auto callbacks = __get_callbacks_registry(_hdl);
     if (!callbacks) {
         return ;
     }
@@ -372,14 +373,14 @@ inline void routable_server<Config>::__on_close(const websocketpp::connection_hd
         callbacks->close_handler(_hdl);
 
     std::unique_lock<std::mutex> locker(mutex_);
-    ws_cbs_table_.erase(_hdl);
+    ws_cb_registry_table_.erase(_hdl);
     ws_conns_.erase(_hdl);
 }
 
 template <typename Config>
 inline void routable_server<Config>::__on_fail(const websocketpp::connection_hdl& _hdl)
 {
-    auto callbacks = __get_callbacks(_hdl);
+    auto callbacks = __get_callbacks_registry(_hdl);
     if (!callbacks) {
         return ;
     }
@@ -388,13 +389,13 @@ inline void routable_server<Config>::__on_fail(const websocketpp::connection_hdl
         callbacks->fail_handler(_hdl);
 
     std::unique_lock<std::mutex> locker(mutex_);
-    ws_cbs_table_.erase(_hdl);
+    ws_cb_registry_table_.erase(_hdl);
 }
 
 template <typename Config>
 inline void routable_server<Config>::__on_interrupt(const websocketpp::connection_hdl& _hdl)
 {
-    auto callbacks = __get_callbacks(_hdl);
+    auto callbacks = __get_callbacks_registry(_hdl);
     if (!callbacks) {
         return ;
     }
@@ -406,7 +407,7 @@ inline void routable_server<Config>::__on_interrupt(const websocketpp::connectio
 template <typename Config>
 inline bool routable_server<Config>::__on_validate(const websocketpp::connection_hdl& _hdl)
 {
-    auto callbacks = __get_callbacks(_hdl);
+    auto callbacks = __get_callbacks_registry(_hdl);
     if (!callbacks) {
         return false;
     }
@@ -422,7 +423,7 @@ inline void routable_server<Config>::__on_message(
     const websocketpp::connection_hdl& _hdl, 
     const typename websocketpp::connection<Config>::message_ptr& _payload)
 {
-    auto callbacks = __get_callbacks(_hdl);
+    auto callbacks = __get_callbacks_registry(_hdl);
     if (!callbacks) {
         return ;
     }
@@ -474,8 +475,8 @@ inline bool routable_server<Config>::__dispatch_request(const websocketpp::conne
 }
 
 template <typename Config>
-inline typename routable_server<Config>::ws_callbacks_ptr 
-    routable_server<Config>::__get_callbacks(const std::string& _pattern) const
+inline typename routable_server<Config>::ws_cb_registry_ptr
+    routable_server<Config>::__get_callbacks_registry(const std::string& _pattern) const
 {
     std::unique_lock<std::mutex> locker(mutex_);
     for (auto const& [pattern, callbacks] : ws_handlers_) 
@@ -489,12 +490,12 @@ inline typename routable_server<Config>::ws_callbacks_ptr
 }
 
 template <typename Config>
-inline typename routable_server<Config>::ws_callbacks_ptr 
-    routable_server<Config>::__get_callbacks(const websocketpp::connection_hdl& _hdl)
+inline typename routable_server<Config>::ws_cb_registry_ptr
+    routable_server<Config>::__get_callbacks_registry(const websocketpp::connection_hdl& _hdl)
 {
     std::unique_lock<std::mutex> locker(mutex_);
-    auto it = ws_cbs_table_.find(_hdl);
-    if (it != ws_cbs_table_.end()) {
+    auto it = ws_cb_registry_table_.find(_hdl);
+    if (it != ws_cb_registry_table_.end()) {
         return it->second;
     }
     locker.unlock();
@@ -507,7 +508,7 @@ inline typename routable_server<Config>::ws_callbacks_ptr
     {
         if (std::regex_match(path, pattern)) 
         {
-            ws_cbs_table_.emplace(_hdl, callbacks);
+            ws_cb_registry_table_.emplace(_hdl, callbacks);
             return callbacks;
         }
     }
