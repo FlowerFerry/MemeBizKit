@@ -1,8 +1,12 @@
-
+﻿
 #ifndef MMUPP_APP_TXTFILE_HPP_INCLUDED
 #define MMUPP_APP_TXTFILE_HPP_INCLUDED
 
 #include <mego/predef/os/linux.h>
+
+#ifndef MMBKPP_OPT__USE_STD_FILESYSTEM__ENABLED
+#define MMBKPP_OPT__USE_STD_FILESYSTEM__ENABLED 0
+#endif
 
 #if MEGO_OS__LINUX__AVAILABLE
 #   include <unistd.h>
@@ -14,10 +18,15 @@
 #include <megopp/err/err.hpp>
 #include <memepp/string.hpp>
 #include <memepp/convert/std/string.hpp>
-#include <ghc/filesystem.hpp>
 #include <outcome/result.hpp>
+#if !MMBKPP_OPT__USE_STD_FILESYSTEM__ENABLED
+#include <ghc/filesystem.hpp>
+#endif
 
 #include <fstream>
+#if MMBKPP_OPT__USE_STD_FILESYSTEM__ENABLED
+#include <filesystem>
+#endif
 
 namespace outcome = OUTCOME_V2_NAMESPACE;
 
