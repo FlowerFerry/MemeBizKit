@@ -38,6 +38,7 @@ public:
     routable_server();
     ~routable_server() = default;
 
+    void set_host(std::string const& _host);
     void set_port(uint16_t _port);
 
     mgpp::err init_asio(websocketpp::lib::asio::io_service* _io_service);
@@ -107,6 +108,7 @@ private:
     bool internal_loop_ = false;
     int ping_interval_ms_ = -1;
     int port_ = -1;
+    std::string host_;
 
     ws_handlers ws_handlers_;
     std::unordered_map<mgpp::mem::hashable_weak_ptr<void>, ws_cb_registry_ptr> ws_cb_registry_table_;
@@ -175,6 +177,12 @@ inline routable_server<Config>::routable_server()
 }
 
 template<typename Config>
+inline void routable_server<Config>::set_host(const std::string& _host)
+{
+    host_ = _host;
+}
+
+template<typename Config>
 inline void routable_server<Config>::set_port(uint16_t _port)
 {
     port_ = _port;
@@ -200,11 +208,18 @@ inline mgpp::err routable_server<Config>::start()
     if (internal_loop_) {
         server_.reset();
     }
+
+    if (host_.empty()) {
 #if !MMBKPP_OPT__IPV6_ENABLED
-    server_.listen(websocketpp::lib::asio::ip::tcp::v4(), uint16_t(port_));
+        server_.listen(websocketpp::lib::asio::ip::tcp::v4(), uint16_t(port_));
 #else
-    server_.listen(uint16_t(port_));
+        server_.listen(uint16_t(port_));
 #endif
+    }
+    else {
+        server_.listen(host_, uint16_t(port_));
+    }
+
     server_.start_accept(ec);
     return { mgec__from_posix_err(ec.value()) };
 }
