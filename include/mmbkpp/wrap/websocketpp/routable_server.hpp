@@ -3,6 +3,7 @@
 #define MMBKPP_WRAP_WSPP_ROUTABLE_SERVER_HPP_INCLUDED
 
 #include <unordered_map>
+#include <functional>
 #include <string>
 #include <vector>
 #include <memory>
@@ -32,6 +33,7 @@ class routable_server
 {
 
 public:
+    using stopped_cb_t = std::function<void(const mgpp::err&)>;
 
     routable_server();
     ~routable_server() = default;
@@ -42,6 +44,7 @@ public:
     mgpp::err start();
     mgpp::err run();
     mgpp::err stop_request();
+    void stop(const stopped_cb_t& _cb);
 
     inline websocketpp::server<Config>& source() {
         return server_;
@@ -192,6 +195,8 @@ inline mgpp::err routable_server<Config>::init_asio(websocketpp::lib::asio::io_s
 template<typename Config>
 inline mgpp::err routable_server<Config>::start()
 {
+    asio::error_code ec;
+    
     if (internal_loop_) {
         server_.reset();
     }
@@ -200,8 +205,8 @@ inline mgpp::err routable_server<Config>::start()
 #else
     server_.listen(uint16_t(port_));
 #endif
-    server_.start_accept();
-    return {};
+    server_.start_accept(ec);
+    return { mgec__from_posix_err(ec.value()) };
 }
 
 template<typename Config>
@@ -221,17 +226,24 @@ inline mgpp::err routable_server<Config>::run()
 template<typename Config>
 inline mgpp::err routable_server<Config>::stop_request()
 {
-    server_.get_io_service().post([this]
+    stop(nullptr);
+    return {};
+}
+
+template<typename Config>
+inline void routable_server<Config>::stop(const stopped_cb_t& _cb)
+{
+    server_.get_io_service().post([this, _cb]
     {
         server_.stop_listening();
 
         std::string reason = "server stop";
         std::error_code ec;
-    
+
         std::unique_lock<std::mutex> locker(mutex_);
         for (auto& conn : ws_conns_) {
             ec.clear();
-            
+
             server_.pause_reading(conn.second->hdl, ec);
             if (ec) {
                 // TO_DO
@@ -241,9 +253,10 @@ inline mgpp::err routable_server<Config>::stop_request()
                 // TO_DO
             }
         }
+        if (_cb) {
+            _cb();
+        }
     });
-    
-    return {};
 }
 
 template <typename Config>
