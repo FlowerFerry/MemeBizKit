@@ -32,6 +32,11 @@ namespace outcome = OUTCOME_V2_NAMESPACE;
 
 namespace mmbkpp::app {
     
+#if MMBKPP_OPT__USE_STD_FILESYSTEM__ENABLED
+    namespace __fs = std::filesystem;
+#else
+    namespace __fs = ghc::filesystem;
+#endif
 
     template<typename _Object>
     class txtfile
@@ -49,7 +54,7 @@ namespace mmbkpp::app {
         virtual ~txtfile()
         {}
         
-        inline void set_path(const ghc::filesystem::path& _path)
+        inline void set_path(const __fs::path& _path)
         {
             path_ = _path;
         }
@@ -79,7 +84,7 @@ namespace mmbkpp::app {
         }
 
     protected:
-        ghc::filesystem::path path_;
+        __fs::path path_;
         bool utf8_bom_;
         bool auto_create_;
         mmint_t max_file_size_;
@@ -92,7 +97,7 @@ namespace mmbkpp::app {
             return outcome::failure(mgpp::err{ MGEC__ERR });
         }
 
-        if (!ghc::filesystem::exists(path_))
+        if (!__fs::exists(path_))
         {
             if (auto_create_) {
                 auto obj = default_creator<_Object>::create();
