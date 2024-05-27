@@ -217,7 +217,7 @@ inline mgpp::err routable_server<Config>::start()
 #endif
     }
     else {
-        server_.listen(host_, uint16_t(port_));
+        server_.listen(asio::ip::make_address(host_), uint16_t(port_));
     }
 
     server_.start_accept(ec);
@@ -269,7 +269,7 @@ inline void routable_server<Config>::stop(const stopped_cb_t& _cb)
             }
         }
         if (_cb) {
-            _cb();
+            _cb({});
         }
     });
 }
