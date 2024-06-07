@@ -346,7 +346,7 @@ namespace app {
 };
 };
 
-inline memepp::string_view mmu_tr(
+inline memepp::string_view mmbk_tr(
     const memepp::string_view& _context,
     const memepp::string_view& _origin_text)
 {
@@ -355,7 +355,7 @@ inline memepp::string_view mmu_tr(
         _origin_text);
 }
 
-inline memepp::string_view mmu_tr1(
+inline memepp::string_view mmbk_tr1(
     const memepp::string& _code,
     const memepp::string_view& _context,
     const memepp::string_view& _origin_text)
@@ -366,7 +366,7 @@ inline memepp::string_view mmu_tr1(
         _origin_text);
 }
 
-inline memepp::string_view mmu_tr2(
+inline memepp::string_view mmbk_tr2(
     const memepp::string& _dst_code,
     const memepp::string& _src_code,
     const memepp::string_view& _context,
