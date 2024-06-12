@@ -355,18 +355,18 @@ inline memepp::string_view mmbk_tr(
         _origin_text);
 }
 
-inline memepp::string_view mmbk_tr1(
-    const memepp::string& _code,
+inline memepp::string_view mmbk_tr_with_dc(
+    const memepp::string& _dst_code,
     const memepp::string_view& _context,
     const memepp::string_view& _origin_text)
 {
     return mmbkpp::app::translation_mapper::instance().translate(
-        _code,
+        _dst_code,
         _context,
         _origin_text);
 }
 
-inline memepp::string_view mmbk_tr2(
+inline memepp::string_view mmbk_tr_with_sc_dc(
     const memepp::string& _dst_code,
     const memepp::string& _src_code,
     const memepp::string_view& _context,
