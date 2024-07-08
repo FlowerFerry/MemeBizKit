@@ -86,6 +86,7 @@ namespace obfhw {
         fp = fopen(path, "r");
         OBF_IF (fp != NULL) {
             len = fread(buf, 1, sizeof(buf), fp);
+            fclose(fp); fp = NULL;
             OBF_IF (len != 0) {
                 if (buf[len - 1] == '\n') {
                     buf[len - 1] = '\0';
@@ -98,6 +99,7 @@ namespace obfhw {
         fp = fopen(path, "r");
         OBF_IF (fp != NULL) {
             len = fread(buf, 1, sizeof(buf), fp);
+            fclose(fp); fp = NULL;
             OBF_IF (len != 0) {
                 if (buf[len - 1] == '\n') {
                     buf[len - 1] = '\0';
@@ -110,6 +112,7 @@ namespace obfhw {
         fp = fopen(path, "r");
         OBF_IF (fp != NULL) {
             len = fread(buf, 1, sizeof(buf), fp);
+            fclose(fp); fp = NULL;
             OBF_IF (len != 0) {
                 if (buf[len - 1] == '\n') {
                     buf[len - 1] = '\0';
@@ -122,6 +125,7 @@ namespace obfhw {
         fp = fopen(path, "r");
         OBF_IF (fp != NULL) {
             len = fread(buf, 1, sizeof(buf), fp);
+            fclose(fp); fp = NULL;
             OBF_IF (len != 0) {
                 if (buf[len - 1] == '\n') {
                     buf[len - 1] = '\0';
@@ -134,6 +138,7 @@ namespace obfhw {
         fp = fopen(path, "r");
         OBF_IF (fp != NULL) {
             len = fread(buf, 1, sizeof(buf), fp);
+            fclose(fp); fp = NULL;
             OBF_IF (len != 0) {
                 if (buf[len - 1] == '\n') {
                     buf[len - 1] = '\0';
@@ -146,6 +151,7 @@ namespace obfhw {
         fp = fopen(path, "r");
         OBF_IF (fp != NULL) {
             len = fread(buf, 1, sizeof(buf), fp);
+            fclose(fp); fp = NULL;
             OBF_IF (len != 0) {
                 if (buf[len - 1] == '\n') {
                     buf[len - 1] = '\0';
@@ -158,6 +164,7 @@ namespace obfhw {
         fp = fopen(path, "r");
         OBF_IF (fp != NULL) {
             len = fread(buf, 1, sizeof(buf), fp);
+            fclose(fp); fp = NULL;
             OBF_IF (len != 0) {
                 if (buf[len - 1] == '\n') {
                     buf[len - 1] = '\0';
@@ -170,6 +177,7 @@ namespace obfhw {
         fp = fopen(path, "r");
         OBF_IF (fp != NULL) {
             len = fread(buf, 1, sizeof(buf), fp);
+            fclose(fp); fp = NULL;
             OBF_IF (len != 0) {
                 if (buf[len - 1] == '\n') {
                     buf[len - 1] = '\0';
