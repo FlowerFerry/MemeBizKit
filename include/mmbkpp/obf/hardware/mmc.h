@@ -194,7 +194,7 @@ namespace obfhw {
         OBF_BEGIN;
 
 #if MG_OS__LINUX_AVAIL
-        auto e = mmbkpp::obf::linux::readdir("/sys/block", -1, 
+        auto e = mmbkpp::obfos::linux::readdir("/sys/block", -1, 
         [&](const dirent* _entry) {
             if (_entry->d_name[0] == 'm' 
              && _entry->d_name[1] == 'm'
