@@ -34,13 +34,13 @@ namespace obf_linux {
         MEGOPP_UTIL__ON_SCOPE_CLEANUP([&] { mgu__free_cns(_path, path); });
 
         struct dirent* entry = NULL;
-        DIR* dir = opendir(path);
+        DIR* dir = ::opendir(path);
         OBF_IF (MEGO_SYMBOL__UNLIKELY(dir == NULL))
             OBF_RETURN(mgpp::err{ MGEC__ERR });
         OBF_ENDIF;
-        MEGOPP_UTIL__ON_SCOPE_CLEANUP([&] { closedir(dir); });
+        MEGOPP_UTIL__ON_SCOPE_CLEANUP([&] { ::closedir(dir); });
 
-        OBF_WHILE ((entry = readdir(dir)) != NULL)
+        OBF_WHILE ((entry = ::readdir(dir)) != NULL)
         {
             if constexpr (std::is_same_v<std::invoke_result_t<_Fn, const dirent*>, bool>)
             {

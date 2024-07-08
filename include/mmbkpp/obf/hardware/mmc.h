@@ -207,7 +207,6 @@ namespace obfhw {
                 }
                 *_it = info;
             }
-            return true;
         });
 
         OBF_RETURN(mgpp::err{ 0 });
