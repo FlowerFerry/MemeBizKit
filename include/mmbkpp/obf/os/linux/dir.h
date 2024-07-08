@@ -15,8 +15,7 @@
 #endif
 
 namespace mmbkpp {
-namespace obfos {
-namespace linux {
+namespace obf_linux {
 
     template <typename _Fn>
     inline mgpp::err readdir(const char* _path, mmint_t _slen, _Fn&& _fn)
@@ -60,8 +59,7 @@ namespace linux {
         OBF_RETURN(mgpp::err{ MGEC__OPNOTSUPP });
         OBF_END;
     }
-
-}
+    
 }
 }
 
