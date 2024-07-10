@@ -88,9 +88,9 @@ namespace obfhw {
             len = fread(buf, 1, sizeof(buf), fp);
             fclose(fp); fp = NULL;
             OBF_IF (len != 0) {
-                if (buf[len - 1] == '\n') {
+                OBF_IF (buf[len - 1] == '\n') {
                     buf[len - 1] = '\0';
-                }
+                } OBF_ENDIF;
                 _info.csd = buf;
             } OBF_ENDIF;
         } OBF_ENDIF;
@@ -101,9 +101,9 @@ namespace obfhw {
             len = fread(buf, 1, sizeof(buf), fp);
             fclose(fp); fp = NULL;
             OBF_IF (len != 0) {
-                if (buf[len - 1] == '\n') {
+                OBF_IF (buf[len - 1] == '\n') {
                     buf[len - 1] = '\0';
-                }
+                } OBF_ENDIF;
                 _info.oemid = buf;
             } OBF_ENDIF;
         } OBF_ENDIF;
@@ -114,9 +114,9 @@ namespace obfhw {
             len = fread(buf, 1, sizeof(buf), fp);
             fclose(fp); fp = NULL;
             OBF_IF (len != 0) {
-                if (buf[len - 1] == '\n') {
+                OBF_IF (buf[len - 1] == '\n') {
                     buf[len - 1] = '\0';
-                }
+                } OBF_ENDIF;
                 _info.name = buf;
             } OBF_ENDIF;
         } OBF_ENDIF;
@@ -127,9 +127,9 @@ namespace obfhw {
             len = fread(buf, 1, sizeof(buf), fp);
             fclose(fp); fp = NULL;
             OBF_IF (len != 0) {
-                if (buf[len - 1] == '\n') {
+                OBF_IF (buf[len - 1] == '\n') {
                     buf[len - 1] = '\0';
-                }
+                } OBF_ENDIF;
                 _info.serial = buf;
             } OBF_ENDIF;
         } OBF_ENDIF;
@@ -140,9 +140,9 @@ namespace obfhw {
             len = fread(buf, 1, sizeof(buf), fp);
             fclose(fp); fp = NULL;
             OBF_IF (len != 0) {
-                if (buf[len - 1] == '\n') {
+                OBF_IF (buf[len - 1] == '\n') {
                     buf[len - 1] = '\0';
-                }
+                } OBF_ENDIF;
                 _info.manfid = buf;
             } OBF_ENDIF;
         } OBF_ENDIF;
@@ -153,9 +153,9 @@ namespace obfhw {
             len = fread(buf, 1, sizeof(buf), fp);
             fclose(fp); fp = NULL;
             OBF_IF (len != 0) {
-                if (buf[len - 1] == '\n') {
+                OBF_IF (buf[len - 1] == '\n') {
                     buf[len - 1] = '\0';
-                }
+                } OBF_ENDIF;
                 _info.date = buf;
             } OBF_ENDIF;
         } OBF_ENDIF;
@@ -166,9 +166,9 @@ namespace obfhw {
             len = fread(buf, 1, sizeof(buf), fp);
             fclose(fp); fp = NULL;
             OBF_IF (len != 0) {
-                if (buf[len - 1] == '\n') {
+                OBF_IF (buf[len - 1] == '\n') {
                     buf[len - 1] = '\0';
-                }
+                } OBF_ENDIF;
                 _info.type = buf;
             } OBF_ENDIF;
         } OBF_ENDIF;
@@ -179,9 +179,9 @@ namespace obfhw {
             len = fread(buf, 1, sizeof(buf), fp);
             fclose(fp); fp = NULL;
             OBF_IF (len != 0) {
-                if (buf[len - 1] == '\n') {
+                OBF_IF (buf[len - 1] == '\n') {
                     buf[len - 1] = '\0';
-                }
+                } OBF_ENDIF;
                 _info.removable = (buf[0] == '1') ? removable_t::removable : removable_t::fixed;
             } OBF_ENDIF;
         }
