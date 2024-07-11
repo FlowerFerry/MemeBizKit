@@ -1,0 +1,88 @@
+
+#ifndef MMBKPP_OBFHW_MMC_INTO_YYJSON_H_INCLUDED
+#define MMBKPP_OBFHW_MMC_INTO_YYJSON_H_INCLUDED
+
+#include <yyjson.h>
+
+#include <megopp/err/err.h>
+#include <mmbkpp/obf/hardware/mmc.h>
+#include <mmbkpp/wrap/obfy/instr.h>
+
+namespace mmbkpp {
+namespace obfhw {
+
+inline mgpp::err mmc_into_yyjson(
+    const mmc_info& _info, yyjson_mut_doc* _doc, 
+    yyjson_mut_val* _val = NULL, const char* _key = NULL)
+{
+    OBF_BEGIN;
+
+    mgpp::err e;
+
+    OBF_IF (_val == NULL) {
+        auto yyroot = yyjson_mut_doc_get_root(_doc);
+        OBF_IF (yyroot == NULL) {
+            yyroot = yyjson_mut_obj(_doc);
+            yyjson_mut_doc_set_root(_doc, yyroot);
+        }
+        OBF_ENDIF;
+
+        _val = yyroot;
+    }
+    OBF_ENDIF;
+
+    auto create_fn = [](const mmc_info& _info, yyjson_mut_doc* _doc) 
+    {
+
+        auto yyinfo = yyjson_mut_obj(_doc);
+
+        yyjson_mut_obj_add_str(_doc, yyinfo, "dev_name", _info.dev_name.data());
+        yyjson_mut_obj_add_str(_doc, yyinfo, "cid", _info.cid.data());
+        yyjson_mut_obj_add_str(_doc, yyinfo, "csd", _info.csd.data());
+        yyjson_mut_obj_add_str(_doc, yyinfo, "oemid", _info.oemid.data());
+        yyjson_mut_obj_add_str(_doc, yyinfo, "name", _info.name.data());
+        yyjson_mut_obj_add_str(_doc, yyinfo, "serial", _info.serial.data());
+        yyjson_mut_obj_add_str(_doc, yyinfo, "manfid", _info.manfid.data());
+        yyjson_mut_obj_add_str(_doc, yyinfo, "date", _info.date.data());
+        yyjson_mut_obj_add_str(_doc, yyinfo, "type", _info.type.data());
+        yyjson_mut_obj_add_str(_doc, yyinfo, "removable", 
+            _info.removable == removable_t::fixed ? "fixed" : 
+            _info.removable == removable_t::removable ? "removable" : "unknown");
+        
+        return yyinfo;
+    };
+
+    OBF_IF (yyjson_mut_is_obj(_val)) 
+    {
+        OBF_IF (_key == NULL) {
+            e = mgpp::err{ MGEC__ERR };
+            OBF_RETURN(e);
+        }
+        OBF_ENDIF;
+
+        auto yyinfo = create_fn(_info, _doc);
+        yyjson_mut_obj_add_val(_doc, _val, _key, yyinfo);
+
+        e = mgpp::err{ MGEC__OK };
+        OBF_RETURN(e);
+    }
+    OBF_ENDIF;
+    OBF_IF (yyjson_mut_is_arr(_val)) 
+    {
+        auto yyinfo = create_fn(_info, _doc);
+        yyjson_mut_arr_add_val(_val, yyinfo);
+
+        e = mgpp::err{ MGEC__OK };
+        OBF_RETURN(e);
+    }
+    OBF_ENDIF;
+
+    e = mgpp::err{ MGEC__ERR };
+    OBF_RETURN(e);
+    OBF_END;
+}
+
+}    
+}
+
+#endif // !MMBKPP_OBFHW_MMC_INTO_YYJSON_H_INCLUDED
