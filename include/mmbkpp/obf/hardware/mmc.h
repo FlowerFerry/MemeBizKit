@@ -5,6 +5,7 @@
 #include <memepp/string.hpp>
 #include <memepp/string_view.hpp>
 #include <megopp/util/scope_cleanup.h>
+#include <megopp/hardware/mmc/info.h>
 #include <mmbkpp/wrap/obfy/instr.h>
 #include <mmbkpp/obf/os/linux/dir.h>
 #include <megopp/err/err.h>
@@ -12,45 +13,8 @@
 namespace mmbkpp {
 namespace obfhw {
 
-    enum class removable_t
-    {
-        unknown,
-        fixed,
-        removable
-    };
-
-    struct mmc_info
-    {
-        mmc_info()
-            : removable(removable_t::unknown)
-        {
-        }
-        
-        inline void reset()
-        {
-            dev_name.reset();
-            cid.reset();
-            csd.reset();
-            oemid.reset();
-            name.reset();
-            serial.reset();
-            manfid.reset();
-            date.reset();
-            type.reset();
-            removable = removable_t::unknown;
-        }
-
-        memepp::string dev_name;
-        memepp::string cid;
-        memepp::string csd;
-        memepp::string oemid;
-        memepp::string name;
-        memepp::string serial;
-        memepp::string manfid;
-        memepp::string date;
-        memepp::string type;
-        removable_t    removable;
-    };
+    using removable_t = mgpp::hw::mmc::removable_t;
+    using mmc_info    = mgpp::hw::mmc::info;
 
     inline mgpp::err get_mmc_info(
         const memepp::string_view& _dev_name, mmc_info& _info)
