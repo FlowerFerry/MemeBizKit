@@ -11,7 +11,7 @@
 #include <megopp/err/err.h>
 
 namespace mmbkpp {
-namespace obfhw {
+namespace obf_hw {
 
     using removable_t = mgpp::hw::mmc::removable_t;
     using mmc_info    = mgpp::hw::mmc::info;

@@ -9,7 +9,7 @@
 #include <mmbkpp/wrap/obfy/instr.h>
 
 namespace mmbkpp {
-namespace obfhw {
+namespace obf_hw {
 
 inline mgpp::err mmc_into_yyjson(
     const mmc_info& _info, yyjson_mut_doc* _doc, 
