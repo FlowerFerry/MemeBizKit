@@ -213,7 +213,7 @@ namespace obfhw {
                 if ( err ) {
                     return ;
                 }
-                *_it = info;
+                *_it++ = info;
             }
         });
 
