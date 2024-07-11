@@ -66,6 +66,7 @@ inline mgpp::err mmc_into_yyjson(
         OBF_IF(_out != NULL) {
             *_out = yyinfo;
         }
+        OBF_ENDIF;
         e = mgpp::err{ MGEC__OK };
         OBF_RETURN(e);
     }
@@ -78,6 +79,7 @@ inline mgpp::err mmc_into_yyjson(
         OBF_IF(_out != NULL) {
             *_out = yyinfo;
         }
+        OBF_ENDIF;
         e = mgpp::err{ MGEC__OK };
         OBF_RETURN(e);
     }
