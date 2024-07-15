@@ -3,21 +3,24 @@
 #define MMUPP_APP_SERIAL_PORT_ALIAS_HPP_INCLUDED
 
 #include <memepp/string.hpp>
-#include <memepp/hash/std_hash.hpp>
+#include <memepp/hash/std/hash.hpp>
 
 #include <unordered_set>
+#include <algorithm>
 #include <vector>
 #include <memory>
 
 namespace mmupp { namespace app {
     
+    //! @struct serport_alias
+    //! @brief 表示串口别名的结构体
     struct serport_alias
     {
         enum replace_mode_t {
             unknown,
-            internal_jump_wire_cap_replace,
-            internal_module_replace,
-            external_shared,
+            internal_jump_wire_cap_replace, //< 内部跳线帽替换
+            internal_module_replace,        //< 内部模块替换
+            external_shared,                //< 外部共享
         };
         
         serport_alias():

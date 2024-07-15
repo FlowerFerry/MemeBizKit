@@ -424,23 +424,6 @@ namespace chrono {
 		timers_.insert(timers_.end(), _timer);
 	}
 	
-	//inline std::vector<passive_timer*>::iterator 
-	//	ticker::internal_accept(
-	//		passive_timer* _timer, mgu_timestamp_t _curr) noexcept
-	//{
- //       if (timers_.empty())
-	//		return timers_.insert(timers_.end(), _timer);
-
-	//	for (auto it = timers_.begin(); it != timers_.end(); ++it)
-	//	{
-	//		if (intptr_t(_timer->interval()) < (*it)->due_in()) {
-	//			return timers_.insert(it, _timer);
-	//		}
-	//	}
-	//	
- //       return timers_.insert(timers_.end(), _timer);
-	//}
-
 	inline bool ticker::wheel_timing(mgu_timestamp_t _curr)
 	{
 		auto cleanup = megopp::util::scope_cleanup__create([&]
