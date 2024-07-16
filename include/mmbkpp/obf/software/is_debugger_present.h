@@ -5,6 +5,10 @@
 #include <mego/util/os/windows/windows_simplify.h>
 #include <mego/predef/os/linux.h>
 
+#if !MG_OS__WIN_AVAIL
+#include <sys/ptrace.h>
+#endif
+
 #include <mmbkpp/wrap/obfy/instr.h>
 
 #include <iostream>
@@ -34,11 +38,34 @@ inline bool is_debugger_present()
     }
     OBF_ENDWHILE;
 
+    errno = 0;
+    ptrace(PTRACE_TRACEME, 0, NULL, NULL);
+    OBF_IF(errno == 0) {
+        ptrace(PTRACE_DETACH, 0, NULL, NULL);
+        OBF_RETURN(false);
+    }
+    OBF_ELSE {
+        OBF_RETURN(true);
+    }
+    OBF_ENDIF
+
     OBF_RETURN(false);
     OBF_END;
 #else
-#error "Unsupported OS"
-    return false;
+    OBF_BEGIN;
+    errno = 0;
+    ptrace(PTRACE_TRACEME, 0, NULL, NULL);
+    OBF_IF(errno == 0) {
+        ptrace(PTRACE_DETACH, 0, NULL, NULL);
+        OBF_RETURN(false);
+    }
+    OBF_ELSE {
+        OBF_RETURN(true);
+    }
+    OBF_ENDIF
+    
+    OBF_RETURN(false);
+    OBF_END;
 #endif
 }
 
