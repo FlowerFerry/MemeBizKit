@@ -266,31 +266,20 @@ namespace chrono {
 				return -1;
 			}
 
-			//auto curr_ts = mgu_timestamp_get();
 			std::chrono::seconds range;
 			mgu_timestamp_t start_ts;
-            //mgu_time_t curr_t = _curr / 1000;
-			//struct tm curr_tm;
-			//if (mgu_gmtime_s(&curr_t, &curr_tm) == NULL)
-   //             return -1;
 
 			if (sec > std::chrono::hours(1))
 			{
-				//curr_tm.tm_min = 0;
-				//curr_tm.tm_sec = 0;
-    //            start_ts = mgu_mktime_utc(&curr_tm);
 				start_ts = mgu_timestamp_round_to_day(_curr, mgu_round_down);
 				range = std::chrono::hours(24);
 			}
 			else if (sec > std::chrono::minutes(1))
 			{
-				//curr_tm.tm_sec = 0;
-				//start_ts = mgu_mktime_utc(&curr_tm);
                 start_ts = mgu_timestamp_round_to_hour(_curr, 1, mgu_round_down);
 				range = std::chrono::hours(1);
 			}
 			else {
-				//start_ts = mgu_mktime_utc(&curr_tm);
                 start_ts = mgu_timestamp_round_to_minute(_curr, 1, mgu_round_down);
 				range = std::chrono::minutes(1);
 			}
