@@ -1,4 +1,4 @@
-
+﻿
 #ifndef MMBKPP_WRAP_UVW_TCP_H_INCLUDED
 #define MMBKPP_WRAP_UVW_TCP_H_INCLUDED
 
@@ -57,6 +57,44 @@ namespace mmbkpp {
         return _hdl.bind<uvw::IPv6>(_host, _port);
 #endif
     }
+
+
+#ifndef MMBKPP_WRAP_UVW_3_0_DISABLED
+    inline uvw::socket_address uvw_getpeer(const uvw::TCPHandle& _hdl)
+    {
+        return _hdl.peer();
+    }
+    inline uvw::socket_address uvw_getsock(const uvw::TCPHandle& _hdl)
+    {
+        return _hdl.sock();
+    }
+    inline uvw::socket_address uvw_getpeer_ipv4try(const uvw::TCPHandle& _hdl)
+    {
+        return _hdl.peer();
+    }
+    inline uvw::socket_address uvw_getsock_ipv4try(const uvw::TCPHandle& _hdl)
+    {
+        return _hdl.sock();
+    }
+#else
+    inline uvw::Addr uvw_getpeer(const uvw::TCPHandle& _hdl)
+    {
+        return _hdl.peer();
+    }
+    inline uvw::Addr uvw_getsock(const uvw::TCPHandle& _hdl)
+    {
+        return _hdl.sock();
+    }
+    inline uvw::Addr uvw_getpeer_ipv4try(const uvw::TCPHandle& _hdl)
+    {
+        return _hdl.peer<uvw::IPv4>();
+    }
+    inline uvw::Addr uvw_getsock_ipv4try(const uvw::TCPHandle& _hdl)
+    {
+        return _hdl.sock<uvw::IPv4>();
+    }
+#endif
+
 }
 
 #endif // !MMBKPP_WRAP_UVW_TCP_H_INCLUDED
