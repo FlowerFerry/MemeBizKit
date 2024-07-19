@@ -12,7 +12,7 @@ namespace mmbkpp {
 namespace obf_hw {
 
 inline mgpp::err mmc_into_yyjson(
-    const mmc_info& _info, yyjson_mut_doc* _doc, 
+    const mmc_info& _info, yyjson_mut_doc* _doc, bool _copy,
     yyjson_mut_val* _val = NULL, const char* _key = NULL, yyjson_mut_val** _out = NULL)
 {
     OBF_BEGIN;
@@ -31,21 +31,32 @@ inline mgpp::err mmc_into_yyjson(
     }
     OBF_ENDIF;
 
-    auto create_fn = [](const mmc_info& _info, yyjson_mut_doc* _doc) 
+    auto create_fn = [](const mmc_info& _info, yyjson_mut_doc* _doc, bool _copy) 
     {
+        auto strn_fn = (_copy ? yyjson_mut_obj_add_strncpy : yyjson_mut_obj_add_strn);
+        auto str_fn  = (_copy ? yyjson_mut_arr_add_strcpy  : yyjson_mut_arr_add_str);
 
         auto yyinfo = yyjson_mut_obj(_doc);
 
-        yyjson_mut_obj_add_str(_doc, yyinfo, "dev_name", _info.dev_name.data());
-        yyjson_mut_obj_add_str(_doc, yyinfo, "cid", _info.cid.data());
-        yyjson_mut_obj_add_str(_doc, yyinfo, "csd", _info.csd.data());
-        yyjson_mut_obj_add_str(_doc, yyinfo, "oemid", _info.oemid.data());
-        yyjson_mut_obj_add_str(_doc, yyinfo, "name", _info.name.data());
-        yyjson_mut_obj_add_str(_doc, yyinfo, "serial", _info.serial.data());
-        yyjson_mut_obj_add_str(_doc, yyinfo, "manfid", _info.manfid.data());
-        yyjson_mut_obj_add_str(_doc, yyinfo, "date", _info.date.data());
-        yyjson_mut_obj_add_str(_doc, yyinfo, "type", _info.type.data());
-        yyjson_mut_obj_add_str(_doc, yyinfo, "removable", 
+        strn_fn(_doc, yyinfo, "dev_name", 
+            _info.dev_name.data(), static_cast<size_t>(_info.dev_name.size()));
+        strn_fn(_doc, yyinfo, "cid", 
+            _info.cid.data(), static_cast<size_t>(_info.cid.size()));
+        strn_fn(_doc, yyinfo, "csd", 
+            _info.csd.data(), static_cast<size_t>(_info.csd.size()));
+        strn_fn(_doc, yyinfo, "oemid", 
+            _info.oemid.data(), static_cast<size_t>(_info.oemid.size()));
+        strn_fn(_doc, yyinfo, "name", 
+            _info.name.data(), static_cast<size_t>(_info.name.size()));
+        strn_fn(_doc, yyinfo, "serial", 
+            _info.serial.data(), static_cast<size_t>(_info.serial.size()));
+        strn_fn(_doc, yyinfo, "manfid", 
+            _info.manfid.data(), static_cast<size_t>(_info.manfid.size()));
+        strn_fn(_doc, yyinfo, "date", 
+            _info.date.data(), static_cast<size_t>(_info.date.size()));
+        strn_fn(_doc, yyinfo, "type", 
+            _info.type.data(), static_cast<size_t>(_info.type.size()));
+        str_fn (_doc, yyinfo, "removable", 
             _info.removable == removable_t::fixed ? "fixed" : 
             _info.removable == removable_t::removable ? "removable" : "unknown");
         
