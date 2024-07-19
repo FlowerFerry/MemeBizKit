@@ -71,7 +71,7 @@ inline mgpp::err mmc_into_yyjson(
         }
         OBF_ENDIF;
 
-        auto yyinfo = create_fn(_info, _doc);
+        auto yyinfo = create_fn(_info, _doc, _copy);
         yyjson_mut_obj_add_val(_doc, _val, _key, yyinfo);
 
         OBF_IF(_out != NULL) {
@@ -84,7 +84,7 @@ inline mgpp::err mmc_into_yyjson(
     OBF_ENDIF;
     OBF_IF (yyjson_mut_is_arr(_val)) 
     {
-        auto yyinfo = create_fn(_info, _doc);
+        auto yyinfo = create_fn(_info, _doc, _copy);
         yyjson_mut_arr_add_val(_val, yyinfo);
 
         OBF_IF(_out != NULL) {
