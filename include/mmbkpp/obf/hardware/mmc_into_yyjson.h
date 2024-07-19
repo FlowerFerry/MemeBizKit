@@ -66,7 +66,7 @@ inline mgpp::err mmc_into_yyjson(
     OBF_IF (yyjson_mut_is_obj(_val)) 
     {
         OBF_IF (_key == NULL) {
-            e = mgpp::err{ MGEC__ERR };
+            e = mgpp::err{ MGEC__INVAL };
             OBF_RETURN(e);
         }
         OBF_ENDIF;
@@ -78,7 +78,7 @@ inline mgpp::err mmc_into_yyjson(
             *_out = yyinfo;
         }
         OBF_ENDIF;
-        e = mgpp::err{ MGEC__OK };
+        e = mgpp::err{ };
         OBF_RETURN(e);
     }
     OBF_ENDIF;
@@ -91,12 +91,12 @@ inline mgpp::err mmc_into_yyjson(
             *_out = yyinfo;
         }
         OBF_ENDIF;
-        e = mgpp::err{ MGEC__OK };
+        e = mgpp::err{ };
         OBF_RETURN(e);
     }
     OBF_ENDIF;
 
-    e = mgpp::err{ MGEC__ERR };
+    e = mgpp::err{ MGEC__OPNOTSUPP };
     OBF_RETURN(e);
     OBF_END;
 }
