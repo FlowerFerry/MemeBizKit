@@ -30,7 +30,8 @@ inline bool is_debugger_present()
     {
         OBF_IF(line.find("TracerPid:") != std::string::npos)
         {
-            OBF_IF(line.substr(11) != "0")
+            auto v = atol(line.substr(11).data());
+            OBF_IF(v != 0)
                 OBF_RETURN(true);
             OBF_ENDIF
         }
