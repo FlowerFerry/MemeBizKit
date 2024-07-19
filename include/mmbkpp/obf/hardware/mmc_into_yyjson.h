@@ -34,7 +34,7 @@ inline mgpp::err mmc_into_yyjson(
     auto create_fn = [](const mmc_info& _info, yyjson_mut_doc* _doc, bool _copy) 
     {
         auto strn_fn = (_copy ? yyjson_mut_obj_add_strncpy : yyjson_mut_obj_add_strn);
-        auto str_fn  = (_copy ? yyjson_mut_arr_add_strcpy  : yyjson_mut_arr_add_str);
+        auto str_fn  = (_copy ? yyjson_mut_obj_add_strcpy  : yyjson_mut_obj_add_str);
 
         auto yyinfo = yyjson_mut_obj(_doc);
 
