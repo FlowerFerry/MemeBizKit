@@ -1146,6 +1146,10 @@ inline outcome::checked<sqlite3_hdl_sptr, mgpp::err>
         return outcome::failure(hdl_ret.error());
     }
 
+    if (!_is_readonly) {
+        hdl_ret->do_write("PRAGMA journal_mode = WAL;");
+    }
+
     locker.lock();
     auto open_after_create_table_cb = open_after_create_table_cb_;
     auto table_name = table_name_;
