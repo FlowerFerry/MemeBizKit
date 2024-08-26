@@ -26,7 +26,7 @@ namespace obf_linux {
         static_assert(std::is_invocable_v<_Fn, const dirent*>, "Invalid function type");
 
         mmn_char_cptr_t path = NULL;
-        size_t path_len = 0;
+        mmint_t path_len = 0;
         mgec_t ec = mgu__to_cns(_path, _slen, &path, &path_len, 0);
         OBF_IF (MEGO_SYMBOL__UNLIKELY(ec != 0))
             OBF_RETURN(mgpp::err{ ec });
