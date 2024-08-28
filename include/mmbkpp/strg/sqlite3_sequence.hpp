@@ -1147,7 +1147,7 @@ inline outcome::checked<sqlite3_hdl_sptr, mgpp::err>
     }
 
     if (!_is_readonly) {
-        hdl_ret->do_write("PRAGMA journal_mode = WAL;");
+        hdl_ret.value()->do_write("PRAGMA journal_mode = WAL;");
     }
 
     locker.lock();
