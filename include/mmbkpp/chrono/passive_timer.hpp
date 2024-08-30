@@ -356,7 +356,7 @@ namespace chrono {
 	{
 		count_ = 0;
 		isStart_ = false;
-		isOnce_ = false;
+		// isOnce_ = false;
 
 		auto ticker = ticker_.lock();
 		if (ticker)
