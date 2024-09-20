@@ -53,6 +53,12 @@ public:
         });
     }
 
+    inline static object_factory& instance()
+    {
+        static object_factory factory;
+        return factory;
+    }
+
 private:
     struct creator_info
     {
