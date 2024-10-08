@@ -36,6 +36,8 @@ namespace obf_hw {
         } OBF_ENDIF;
         
         len = fread(buf, 1, sizeof(buf), fp);
+        fclose(fp); fp = NULL;
+
         OBF_IF (len == 0) {
             OBF_RETURN(mgpp::err{ MGEC__ERR });
         } OBF_ENDIF;
