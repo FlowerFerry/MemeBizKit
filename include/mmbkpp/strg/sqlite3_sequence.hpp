@@ -140,6 +140,19 @@ private:
     outcome::checked<sqlite3_hdl_sptr, mgpp::err>
         get_hdl(index_id_t _index, node_id_t _node, bool _is_readonly, bool _create_if_not_exist);
 
+    struct __hdl_tuple
+    {
+
+        inline void reset()
+        {
+            ro.reset();
+            rw.reset();
+        }
+
+        sqlite3_hdl_sptr ro;
+        sqlite3_hdl_sptr rw;
+    };
+
     struct __hdl_onclose_data
     {
         __hdl_onclose_data()
@@ -209,6 +222,14 @@ private:
         inline memepp::string filepath__st() const
         {
             return sqlite3_sequence::make_filepath(dir_path_, file_prefix_, file_suffix_, index_id_, node_id_);
+        }
+
+        inline __hdl_tuple release_hdl__st()
+        {
+            __hdl_tuple hdls;
+            hdls.ro.swap(s_ro_hdl_);
+            hdls.rw.swap(s_rw_hdl_);
+            return hdls;
         }
 
         mgpp::err try_remove();
@@ -1236,10 +1257,9 @@ inline outcome::checked<sqlite3_sequence::count_t, mgpp::err>
 
         std::unique_lock index_locker(index_info->mtx_);
         auto node_it = index_it->second->nodes_.find(node_id);
-        if (node_it == index_it->second->nodes_.end()) {
-            index_locker.unlock();
+        if (node_it == index_it->second->nodes_.end()) 
             continue;
-        }
+        
         auto node_info = node_it->second;
         index_locker.unlock();
         
