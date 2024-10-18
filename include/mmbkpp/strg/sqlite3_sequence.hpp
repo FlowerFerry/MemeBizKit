@@ -1,4 +1,4 @@
-
+﻿
 #ifndef MMBKPP_STRG_SQLITE3_SEQUENCE_HPP_INCLUDED
 #define MMBKPP_STRG_SQLITE3_SEQUENCE_HPP_INCLUDED
 
@@ -91,6 +91,7 @@ struct sqlite3_sequence : public std::enable_shared_from_this<sqlite3_sequence>
     void set_table_name (const memepp::string& _name);
     void set_open_after_create_table_cb(const open_after_create_table_cb_t& _cb);
     void set_max_kb(mmint_t _max_kb);
+    void set_max_hdl_count(mmint_t _count);
 
     outcome::checked<sqlite3_hdl_sptr, mgpp::err>
         get_rw_hdl(index_id_t _index, node_id_t _node, bool _create_if_not_exist = true);
@@ -108,6 +109,9 @@ struct sqlite3_sequence : public std::enable_shared_from_this<sqlite3_sequence>
         get_ro_hdl_wait_for(index_id_t _index, node_id_t _node, std::chrono::milliseconds _ms);
     outcome::checked<sqlite3_hdl_sptr, mgpp::err>
         get_ro_hdl_and_retry(index_id_t _index, node_id_t _node, mmint_t _try_count);
+
+    outcome::checked<count_t, mgpp::err>
+        check_hdl_limit_and_clean();
 
     outcome::checked<count_t, mgpp::err> 
         try_clean_dir_to_limit(sort_t _sort = sort_t::time_asc);
@@ -255,6 +259,7 @@ private:
     mutable std::mutex mtx_;
     mmint_t max_kb_;
     mmint_t max_idle_second_;
+    mmint_t max_hdl_count_;
     //hdl_status_t all_hdl_status_;
 
     memepp::string dir_path_;
@@ -266,6 +271,8 @@ private:
 
     std::map<index_id_t, __index_info_sptr> index_infos_;
     std::vector<__node_info_sptr> old_nodes_;
+    
+    std::deque<std::tuple<index_id_t, node_id_t>> opened_id_tuples_;
 };
 
 inline mgpp::err sqlite3_sequence::__node_info::try_remove()
@@ -348,6 +355,7 @@ inline mgpp::err sqlite3_sequence::__node_info::try_copy_to(const memepp::string
 sqlite3_sequence::sqlite3_sequence()
     : max_kb_(3 * 1024 * 1024)
     , max_idle_second_(600)
+    , max_hdl_count_(128)
     //, all_hdl_status_(hdl_status_t::ok)
     , dir_path_(mmupp::fs::relative_with_program_path("db_seqs"))
     , file_prefix_("node")
@@ -878,6 +886,12 @@ inline void sqlite3_sequence::set_max_kb(mmint_t _max_kb)
     max_kb_ = _max_kb;
 }
 
+inline void sqlite3_sequence::set_max_hdl_count(mmint_t _count)
+{
+    std::lock_guard<std::mutex> locker(mtx_);
+    max_hdl_count_ = _count;
+}
+
 inline void sqlite3_sequence::set_table_name(const memepp::string& _name)
 {
     std::lock_guard<std::mutex> locker(mtx_);
@@ -972,7 +986,7 @@ outcome::checked<sqlite3_hdl_sptr, mgpp::err>
 }
 
 inline outcome::checked<sqlite3_hdl_sptr, mgpp::err>
-        sqlite3_sequence::get_hdl(index_id_t _index, node_id_t _node, bool _is_readonly, bool _create_if_not_exist)
+    sqlite3_sequence::get_hdl(index_id_t _index, node_id_t _node, bool _is_readonly, bool _create_if_not_exist)
 {
 
     std::error_code ecode;
@@ -1122,6 +1136,8 @@ inline outcome::checked<sqlite3_hdl_sptr, mgpp::err>
     node_info->hdl_status_ = hdl_status_t::opening;
     node_locker.unlock();
 
+    check_hdl_limit_and_clean();
+
     int create_flags;
     if (_is_readonly) {
         create_flags = SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX;
@@ -1181,8 +1197,67 @@ inline outcome::checked<sqlite3_hdl_sptr, mgpp::err>
     node_info->hdl_status_ = hdl_status_t::ok;
     node_info->last_access_ts_ = mgu_timestamp_get();
     node_locker.unlock();
+    
+    locker.lock();
+    opened_id_tuples_.push_back(std::make_tuple(_index, _node));
+    locker.unlock();
 
     return outcome::success(hdl_ret.value());
+}
+
+inline outcome::checked<sqlite3_sequence::count_t, mgpp::err>
+    sqlite3_sequence::check_hdl_limit_and_clean()
+{
+    std::deque<std::tuple<index_id_t, node_id_t>> id_tuples;
+    std::unique_lock self_locker(mtx_);
+    if (max_hdl_count_ >= opened_id_tuples_.size())
+        return outcome::success(0);
+    
+    auto count = opened_id_tuples_.size() - max_hdl_count_;
+    auto begit = opened_id_tuples_.begin();
+    auto endit = std::next(begit, count);
+    id_tuples.insert(id_tuples.end(), begit, endit);
+    opened_id_tuples_.erase(begit, endit);
+    self_locker.unlock();
+
+    count = 0;
+    for (auto& id_tuple : id_tuples) {
+        auto index_id = std::get<0>(id_tuple);
+        auto node_id  = std::get<1>(id_tuple);
+        
+        self_locker.lock();
+        auto index_it = index_infos_.find(index_id);
+        if (index_it == index_infos_.end()) {
+            self_locker.unlock();
+            continue;
+        }
+        auto index_info = index_it->second;
+        self_locker.unlock();
+
+        std::unique_lock index_locker(index_it->second->mtx_);
+        auto node_it = index_it->second->nodes_.find(node_id);
+        if (node_it == index_it->second->nodes_.end()) {
+            index_locker.unlock();
+            continue;
+        }
+        auto node_info = node_it->second;
+        index_locker.unlock();
+        
+        std::unique_lock node_locker(node_info->mtx_);
+
+        do {
+            sqlite3_hdl_sptr ro_hdl;
+            sqlite3_hdl_sptr rw_hdl;
+            ro_hdl.swap(node_info->s_ro_hdl_);
+            rw_hdl.swap(node_info->s_rw_hdl_);
+            node_locker.unlock();
+            
+        } while (0);
+
+        ++count;
+    }
+
+    return outcome::success(count);
 }
 
 outcome::checked<sqlite3_sequence::count_t, mgpp::err> 
