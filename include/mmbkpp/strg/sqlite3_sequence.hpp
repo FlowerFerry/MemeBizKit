@@ -1234,7 +1234,7 @@ inline outcome::checked<sqlite3_sequence::count_t, mgpp::err>
         auto index_info = index_it->second;
         self_locker.unlock();
 
-        std::unique_lock index_locker(index_it->second->mtx_);
+        std::unique_lock index_locker(index_info->mtx_);
         auto node_it = index_it->second->nodes_.find(node_id);
         if (node_it == index_it->second->nodes_.end()) {
             index_locker.unlock();
