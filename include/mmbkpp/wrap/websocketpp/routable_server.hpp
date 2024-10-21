@@ -17,6 +17,8 @@
 #include <memepp/convert/std/string.hpp>
 #include <memepp/convert/common.hpp>
 #include <megopp/memory/hashable_weak_ptr.hpp>
+
+#include <mmsw/util/can_bind_ipv6.h>
 #include <megopp/err/err.hpp>
 #include <mego/err/ec_impl.h>
 
@@ -213,7 +215,10 @@ inline mgpp::err routable_server<Config>::start()
 #if !MMBKPP_OPT__IPV6_ENABLED
         server_.listen(websocketpp::lib::asio::ip::tcp::v4(), uint16_t(port_));
 #else
+    if (mmsw_util__can_bind_ipv6(uint16_t(port_)))
         server_.listen(uint16_t(port_));
+    else
+        server_.listen(websocketpp::lib::asio::ip::tcp::v4(), uint16_t(port_));
 #endif
     }
     else {
