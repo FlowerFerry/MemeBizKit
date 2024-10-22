@@ -2,7 +2,7 @@
 #ifndef MMUPP_STREAM_PACKAGE_HPP_INCLUDED
 #define MMUPP_STREAM_PACKAGE_HPP_INCLUDED
 
-#include <mego/err/ec.h>
+#include <megopp/err/err.h>
 #include <memepp/buffer.hpp>
 #include <memepp/buffer_view.hpp>
 #include <memepp/variable_buffer.hpp>
@@ -14,17 +14,17 @@ namespace stream {
 
     struct package_preproc
     {
-        typedef mgec_t(recv_cb_t)(const memepp::buffer_view& _buf, package_preproc*, void* _userdata);
-        typedef mgec_t(calc_len_cb_t)(
+        typedef mgpp::err(recv_cb_t)(const memepp::buffer_view& _buf, package_preproc*, void* _userdata);
+        typedef mgpp::err(calc_len_cb_t)(
             const memepp::buffer_view& _curr, 
             const memepp::buffer_view& _wait, size_t* _length, void* _userdata);
-        typedef mgec_t(checksum_succ_cb_t)(const memepp::buffer_view& _buf, void* _userdata);
+        typedef mgpp::err(chksum_succ_cb_t)(const memepp::buffer_view& _buf, void* _userdata);
         
         package_preproc(void* _userdata = nullptr):
             userdata_(_userdata),
             recv_cb_(nullptr),
             calc_len_cb_(nullptr),
-            checksum_succ_cb_(nullptr),
+            chksum_succ_cb_(nullptr),
             min_limit_package_size_(0),
             max_limit_package_size_(SIZE_MAX),
             head_matched_(false)
@@ -38,7 +38,7 @@ namespace stream {
             }, this);
         }
         
-        virtual mgec_t raw_input(const memepp::buffer_view& _buf, mgu_timestamp_t _now);
+        virtual mgpp::err raw_input(const memepp::buffer_view& _buf, mgu_timestamp_t _now);
         
         inline constexpr void set_recv_cb(recv_cb_t* _cb) noexcept
         {
@@ -50,9 +50,9 @@ namespace stream {
             calc_len_cb_ = _cb;
         }
 
-        inline constexpr void set_checksum_succ_cb(checksum_succ_cb_t* _cb) noexcept
+        inline constexpr void set_checksum_succ_cb(chksum_succ_cb_t* _cb) noexcept
         {
-            checksum_succ_cb_ = _cb;
+            chksum_succ_cb_ = _cb;
         }
 
         inline constexpr void set_min_limit_package_size(size_t _size) noexcept
@@ -96,18 +96,18 @@ namespace stream {
             recv_curr_cache_.clear();
         }
 
-        mmint_t poll_check(mgu_timestamp_t _now) const;
-        mgec_t  poll(mgu_timestamp_t _now);
+        mmint_t   poll_check(mgu_timestamp_t _now) const;
+        mgpp::err poll(mgu_timestamp_t _now);
 
     private:
 
-        inline mgec_t raw_input_part(
+        inline mgpp::err raw_input_part(
             const memepp::buffer_view& _buf, mgu_timestamp_t _now, mmint_t* _offset);
 
         void* userdata_;
         recv_cb_t* recv_cb_;
         calc_len_cb_t* calc_len_cb_;
-        checksum_succ_cb_t* checksum_succ_cb_;
+        chksum_succ_cb_t* chksum_succ_cb_;
         chrono::passive_timer recv_wait_timer_;
         memepp::buffer head_match_;
         size_t min_limit_package_size_;
@@ -117,17 +117,17 @@ namespace stream {
         bool head_matched_;
     };
 
-    inline mgec_t package_preproc::raw_input(const memepp::buffer_view& _buf, mgu_timestamp_t _now)
+    inline mgpp::err package_preproc::raw_input(const memepp::buffer_view& _buf, mgu_timestamp_t _now)
     {
         if (!recv_wait_cache_.empty()) {
             mmint_t offset = 0;
-            int ec = raw_input_part(recv_wait_cache_, _now, &offset);
-            if (ec < 0 && ec != MGEC__AGAIN)
+            auto err = raw_input_part(recv_wait_cache_, _now, &offset);
+            if (err && err.code() != mgpp::make_err_cond(MGEC__AGAIN, mgpp::get_genrc_err_cat()))
             {
-                return ec;
+                return err;
             }
 
-            if (ec == 0 && offset > 0)
+            if (err.ok() && offset > 0)
             {
                 recv_wait_cache_.remove(0, offset);
                 return 0;
@@ -136,13 +136,13 @@ namespace stream {
 
         if (!_buf.empty()) {
             mmint_t offset = 0;
-            int ec = raw_input_part(_buf, _now, &offset);
-            if (ec < 0 && ec != MGEC__AGAIN)
+            auto err = raw_input_part(_buf, _now, &offset);
+            if (err && err.code() != mgpp::make_err_cond(MGEC__AGAIN, mgpp::get_genrc_err_cat()))
             {
-                return ec;
+                return err;
             }
 
-            if (ec == 0 && offset > 0)
+            if (err.ok() && offset > 0)
             {
                 recv_wait_cache_.append(_buf.data() + offset, _buf.size() - offset);
                 return 0;
@@ -152,7 +152,7 @@ namespace stream {
         return 0;
     }
 
-    inline mgec_t package_preproc::raw_input_part(
+    inline mgpp::err package_preproc::raw_input_part(
         const memepp::buffer_view& _buf, mgu_timestamp_t _now, mmint_t* _offset)
     {
         *_offset = 0;
@@ -201,9 +201,11 @@ namespace stream {
                 head_matched_ = true;
             }
             
+            mgpp::err err;
             size_t calc_len = 0;
-            if (calc_len_cb_(_buf, {}, &calc_len, userdata_))
-                return MGEC__PROTO;
+            err = calc_len_cb_(_buf, {}, &calc_len, userdata_);
+            if (err)
+                return err;
 
             if (calc_len > max_limit_package_size())
                 return MGEC__PROTO;
@@ -216,11 +218,11 @@ namespace stream {
                 return 0;
             }
             
-            if (checksum_succ_cb_(
-                memepp::buffer_view{ _buf.data(), mmint_t(calc_len) }, userdata_))
-            {
+            err = chksum_succ_cb_(
+                memepp::buffer_view{ _buf.data(), mmint_t(calc_len) }, userdata_);
+            if (err) {
                 *_offset = calc_len;
-                return MGEC__PROTO;
+                return err;
             }
 
             recv_cb_(memepp::buffer_view{ _buf.data(), mmint_t(calc_len) }, this, userdata_);
@@ -261,9 +263,11 @@ namespace stream {
                     return MGEC__AGAIN;
                 }
 
+                mgpp::err err;
                 size_t calc_len = 0;
-                if (calc_len_cb_(recv_curr_cache_, _buf, &calc_len, userdata_))
-                    return MGEC__PROTO;
+                err = calc_len_cb_(recv_curr_cache_, _buf, &calc_len, userdata_);
+                if (err)
+                    return err;
 
                 if (calc_len > max_limit_package_size())
                     return MGEC__PROTO;
@@ -279,11 +283,11 @@ namespace stream {
                 auto diff = mmint_t(calc_len) - recv_curr_cache_.size();
                 recv_curr_cache_.append(_buf.data(), diff);
 
-                if (checksum_succ_cb_(
-                    memepp::buffer_view{ recv_curr_cache_.data(), mmint_t(calc_len) }, userdata_))
-                {
+                err = chksum_succ_cb_(
+                    memepp::buffer_view{ recv_curr_cache_.data(), mmint_t(calc_len) }, userdata_);
+                if (err) {
                     *_offset = diff;
-                    return MGEC__PROTO;
+                    return err;
                 }
                 
                 recv_cb_(recv_curr_cache_, this, userdata_);
@@ -307,7 +311,7 @@ namespace stream {
         return mmint_t(iv);
     }
 
-    inline mgec_t package_preproc::poll(mgu_timestamp_t _now)
+    inline mgpp::err package_preproc::poll(mgu_timestamp_t _now)
     {
         if (!recv_wait_cache_.empty())
         {
@@ -315,7 +319,7 @@ namespace stream {
         }
         
         recv_wait_timer_.timing(_now);
-        return 0;
+        return {};
     }
 
 };
