@@ -105,11 +105,17 @@ namespace chrono {
 			return false;
 		}
 
-		inline intptr_t due_in() const noexcept
+		inline intptr_t due_in(mgu_timestamp_t _curr) const noexcept
 		{
-			if (is_start())
-				return interval_ - count_;
-			return INTPTR_MAX;
+			if (is_start()) {
+				if (_curr < lastTs_) {
+					return 0;
+				}
+				auto count = count_ + (_curr - lastTs_);
+				if (count < interval_)
+					return interval_ - count;
+			}
+			return 0;
 		}
 
 	private:
@@ -154,6 +160,14 @@ namespace chrono {
         }
 		
 		inline bool wheel_timing(mgu_timestamp_t _curr);
+
+		inline intptr_t due_in(mgu_timestamp_t _curr) const noexcept
+		{
+			if (timers_.empty())
+				return 0;
+			
+			return timers_.front()->due_in(_curr);
+		}
 
 	private:
 
