@@ -416,7 +416,7 @@ namespace chrono {
 
 		for (auto it = timers_.begin(); it != timers_.end();)
 		{
-			if (intptr_t(_timer->interval()) < (*it)->due_in())
+			if (intptr_t(_timer->interval()) < (*it)->due_in(_curr))
 			{
 				timers_.insert(it, _timer);
 				return;
