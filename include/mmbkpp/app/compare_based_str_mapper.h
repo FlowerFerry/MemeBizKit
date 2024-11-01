@@ -20,7 +20,7 @@ struct cond
 struct cond_one_contrast : public cond
 {
     virtual ~cond_one_contrast() = default;
-    virtual double contrast_value() const = 0;
+    virtual double compare_value() const = 0;
 };
 
 struct cond_equal : public cond_one_contrast
@@ -30,7 +30,7 @@ struct cond_equal : public cond_one_contrast
     {}
 
     inline bool match(double _v) const override { return v_ == _v; }
-    inline double contrast_value() const override { return v_; }
+    inline double compare_value() const override { return v_; }
 
 private:
     double v_;
@@ -43,7 +43,7 @@ struct cond_not_equal : public cond_one_contrast
     {}
 
     inline bool match(double _v) const override { return v_ != _v; }
-    inline double contrast_value() const override { return v_; }
+    inline double compare_value() const override { return v_; }
 
 private:
     double v_;
@@ -56,7 +56,7 @@ struct cond_less_than : public cond_one_contrast
     {}
 
     inline bool match(double _v) const override { return _v < v_; }
-    inline double contrast_value() const override { return v_; }
+    inline double compare_value() const override { return v_; }
 
 private:
     double v_;
@@ -69,7 +69,7 @@ struct cond_less_than_or_equal : public cond_one_contrast
     {}
 
     inline bool match(double _v) const override { return _v <= v_; }
-    inline double contrast_value() const override { return v_; }
+    inline double compare_value() const override { return v_; }
 
 private:
     double v_;
@@ -82,7 +82,7 @@ struct cond_greater_than : public cond_one_contrast
     {}
 
     inline bool match(double _v) const override { return _v > v_; } 
-    inline double contrast_value() const override { return v_; }
+    inline double compare_value() const override { return v_; }
 
 private:
     double v_;
@@ -95,30 +95,44 @@ struct cond_greater_than_or_equal : public cond_one_contrast
     {}
 
     inline bool match(double _v) const override { return _v >= v_; }
-    inline double contrast_value() const override { return v_; }
+    inline double compare_value() const override { return v_; }
 
 private:
     double v_;  
 };
 
-struct cond_range : public cond
+struct cond_or : public cond
 {
-    cond_range(std::unique_ptr<cond_one_contrast> _lep, std::unique_ptr<cond_one_contrast> _rep)
-        : lep_(std::move(_lep))
-        , rep_(std::move(_rep))
-    {
-        if (lep_->contrast_value() > rep_->contrast_value())
-            std::swap(lep_, rep_);
-    }
+    cond_or(std::unique_ptr<cond> _lhs, std::unique_ptr<cond> _rhs)
+        : lhs_(std::move(_lhs))
+        , rhs_(std::move(_rhs))
+    {}
 
     inline bool match(double _v) const override
     {
-        return lep_->match(_v) && rep_->match(_v);
+        return lhs_->match(_v) || rhs_->match(_v);
     }
 
 private:
-    std::unique_ptr<cond_one_contrast> lep_;
-    std::unique_ptr<cond_one_contrast> rep_;
+    std::unique_ptr<cond> lhs_;
+    std::unique_ptr<cond> rhs_;
+};
+
+struct cond_and : public cond
+{
+    cond_and(std::unique_ptr<cond> _lhs, std::unique_ptr<cond> _rhs)
+        : lhs_(std::move(_lhs))
+        , rhs_(std::move(_rhs))
+    {}
+
+    inline bool match(double _v) const override
+    {
+        return lhs_->match(_v) && rhs_->match(_v);
+    }
+
+private:
+    std::unique_ptr<cond> lhs_;
+    std::unique_ptr<cond> rhs_;
 };
 
 }
