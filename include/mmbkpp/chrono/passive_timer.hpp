@@ -1,4 +1,4 @@
-
+﻿
 #ifndef MMBKPP_CHRONO_PASSIVE_TIMER_HPP_INCLUDED
 #define MMBKPP_CHRONO_PASSIVE_TIMER_HPP_INCLUDED
 
@@ -9,6 +9,7 @@
 #include <vector>
 #include <chrono>
 #include <set>
+#include <functional>
 
 #include <megopp/util/scope_cleanup.h>
 
@@ -195,6 +196,38 @@ namespace chrono {
         std::set<passive_timer*> wait_removes_;
 	};
 	using ticker_ptr = std::shared_ptr<ticker>;
+
+	struct passive_function_timer : public passive_timer
+	{
+		passive_function_timer() noexcept 
+		{
+			passive_timer::on(__on_passive_function_timer, this);
+		}
+
+		passive_function_timer(const std::weak_ptr<ticker>& _ticker) noexcept 
+			: passive_timer(_ticker)
+		{
+			passive_timer::on(__on_passive_function_timer, this);
+		}
+
+		inline void on(const std::function<bool(passive_function_timer*)>& _fn)
+		{
+			fn_ = _fn;
+		};
+
+	private:
+
+		static inline bool __on_passive_function_timer(passive_timer* _timer, void* _u)
+		{
+			auto self = reinterpret_cast<passive_function_timer*>(_u);
+			if (self->fn_) {
+				return self->fn_(self);
+			}
+			return true;
+		}
+
+		std::function<bool(passive_function_timer*)> fn_;
+	}; 
 
 	struct intervalometer : protected passive_timer
 	{

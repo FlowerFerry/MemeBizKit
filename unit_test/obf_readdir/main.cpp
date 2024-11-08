@@ -5,8 +5,8 @@
 
 int main()
 {
-    std::vector<mmbkpp::obfhw::mmc_info> mmcs;
-    auto e = mmbkpp::obfhw::enum_mmcs(std::back_inserter(mmcs));
+    std::vector<mmbkpp::obf_hw::mmc_info> mmcs;
+    auto e = mmbkpp::obf_hw::enum_mmcs(std::back_inserter(mmcs));
 
     if (e) {
         fmt::print("[Error][{}] {}\n", e.code(), e.message());
@@ -27,5 +27,6 @@ int main()
     }
     fmt::print("---------------------------------------\n");
 
+    
     return 0;
 }
