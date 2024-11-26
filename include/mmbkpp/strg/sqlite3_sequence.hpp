@@ -11,9 +11,9 @@
 #include <set>
 #include <map>
 #include <mutex>
+#include <functional>
 
 #include <fmt/format.h>
-#include <fmt/printf.h>
 #include <memepp/convert/std/wstring.hpp>
 #include <memepp/convert/std/string.hpp>
 #include <memepp/convert/fmt.hpp>
@@ -37,6 +37,19 @@ struct sqlite3_sequence : public std::enable_shared_from_this<sqlite3_sequence>
 
     using open_after_create_table_cb_t = 
         std::function<void(const sqlite3_hdl_sptr&, const memepp::string&, index_id_t, node_id_t)>;
+
+    enum class level_t
+    {
+        trace      = 0,
+        debug      = 1,
+        info       = 2,
+        warn       = 3,
+        error      = 4,
+        critical   = 5,
+        off        = 6,
+    };
+
+    using log_cb_t = std::function<void(level_t, const memepp::string_view&)>;
 
     enum class hdl_status_t 
     {
@@ -92,6 +105,7 @@ struct sqlite3_sequence : public std::enable_shared_from_this<sqlite3_sequence>
     void set_open_after_create_table_cb(const open_after_create_table_cb_t& _cb);
     void set_max_kb(mmint_t _max_kb);
     void set_max_hdl_count(mmint_t _count);
+    void set_log_cb(const log_cb_t& _cb);
 
     outcome::checked<sqlite3_hdl_sptr, mgpp::err>
         get_rw_hdl(index_id_t _index, node_id_t _node, bool _create_if_not_exist = true);
@@ -139,6 +153,8 @@ private:
 
     outcome::checked<sqlite3_hdl_sptr, mgpp::err>
         get_hdl(index_id_t _index, node_id_t _node, bool _is_readonly, bool _create_if_not_exist);
+
+    void log(level_t _level, const memepp::string_view& _msg);
 
     struct __hdl_tuple
     {
@@ -289,6 +305,7 @@ private:
     memepp::string table_name_;
     
     std::shared_ptr<open_after_create_table_cb_t> open_after_create_table_cb_;
+    std::shared_ptr<log_cb_t> log_cb_;
 
     std::map<index_id_t, __index_info_sptr> index_infos_;
     std::vector<__node_info_sptr> old_nodes_;
@@ -315,9 +332,8 @@ inline mgpp::err sqlite3_sequence::__node_info::try_remove()
     std::error_code ecode;
     if (ghc::filesystem::exists(native_src_path, ecode) && !ecode)
     {
+        log(level_t::trace, fmt::format("try_remove; remove file operations: file_path='{}'", src_path));
         ghc::filesystem::remove(native_src_path, ecode);
-        //if (ecode)
-        //    return mgpp::err{ mgec__from_sys_err(ecode.value()) };
     }
     
     return mgpp::err{ mgec__from_sys_err(ecode.value()) };
@@ -527,9 +543,6 @@ inline mgpp::err sqlite3_sequence::set_dir_path_and_move(const memepp::string& _
                 ghc::filesystem::rename(
                     index_iter->path(),
                     fmt::format("{}/{}", dst_index_path, index_iter->path().filename().string()), ecode);
-                //if (!ec) {
-                //    ghc::filesystem::remove(index_iter->path(), ec);
-                //}
             }
             continue;
         }
@@ -566,9 +579,7 @@ inline mgpp::err sqlite3_sequence::set_dir_path_and_move(const memepp::string& _
                 ghc::filesystem::rename(
                     index_iter->path(),
                     fmt::format("{}/{}", dst_index_path, node_name), ecode);
-                //if (!ec) {
-                //    ghc::filesystem::remove(index_iter->path(), ec);
-                //}
+
                 continue;
             }
 
@@ -619,9 +630,6 @@ inline mgpp::err sqlite3_sequence::set_dir_path_and_move(const memepp::string& _
                     index_iter->path(),
                     fmt::format("{}/{}", dst_index_path, node_name), ecode);
             }
-            //if (!ec) {
-            //    ghc::filesystem::remove(index_iter->path(), ec);
-            //}
         }
     }
 
@@ -911,6 +919,12 @@ inline void sqlite3_sequence::set_max_hdl_count(mmint_t _count)
 {
     std::lock_guard<std::mutex> locker(mtx_);
     max_hdl_count_ = _count;
+}
+
+inline void sqlite3_sequence::set_log_cb(const log_cb_t& _cb)
+{
+    std::lock_guard<std::mutex> locker(mtx_);
+    log_cb_ = std::make_shared<log_cb_t>(_cb);
 }
 
 inline void sqlite3_sequence::set_table_name(const memepp::string& _name)
@@ -1226,6 +1240,20 @@ inline outcome::checked<sqlite3_hdl_sptr, mgpp::err>
     return outcome::success(hdl_ret.value());
 }
 
+inline void sqlite3_sequence::log(level_t _level, const memepp::string_view& _msg)
+{
+    std::unique_lock locker{ mtx_ };
+    if (!log_cb_)
+        return;
+    locker.unlock();
+
+    try {
+        (*log_cb_)(_level, _msg);
+    }
+    catch (...) {
+    }
+}
+
 inline outcome::checked<sqlite3_sequence::count_t, mgpp::err>
     sqlite3_sequence::check_hdl_limit_and_clean()
 {
@@ -1284,6 +1312,9 @@ outcome::checked<sqlite3_sequence::count_t, mgpp::err>
     sqlite3_sequence::try_clean_dir_to_limit(sort_t _sort)
 {
     auto dir_u8path = dir_path();
+    log(level_t::trace, mm_view(
+        fmt::format("try_clean_dir_to_limit; sort='{}', dir_path='{}'", 
+        (_sort == sort_t::time_asc ? "time_asc" : "time_desc"), dir_u8path)));
 
     if (mgfs__is_exist_dir(dir_u8path.c_str(), dir_u8path.size()) != 1) 
     {
@@ -1349,7 +1380,11 @@ outcome::checked<sqlite3_sequence::count_t, mgpp::err>
 
             all_nodes[node_id].emplace(index_id);
             ++total_count;
-            total_kb += (ghc::filesystem::file_size(node_path, ecode) / 1024);
+            auto fsize = ghc::filesystem::file_size(node_path, ecode);
+            if (ecode) {
+                continue;
+            }
+            total_kb += (fsize / 1024);
         }
     }
 
@@ -1360,11 +1395,11 @@ outcome::checked<sqlite3_sequence::count_t, mgpp::err>
     }
 
     auto avg_kb = double(total_kb) / total_count;
-    if (MEGO_SYMBOL__LIKELY(avg_kb == 0))
+    if (MG_SYM__LIKELY(avg_kb == 0))
         return outcome::success(count);
 
     auto del_count = (total_kb - max_kb_) / avg_kb;
-    if (MEGO_SYMBOL__LIKELY(del_count <= 0))
+    if (MG_SYM__LIKELY(del_count <= 0))
         return outcome::success(count);
 
     std::map<index_id_t, std::set<node_id_t>> dels;
@@ -1409,8 +1444,10 @@ outcome::checked<sqlite3_sequence::count_t, mgpp::err>
         if (iit == index_infos_.end()) {
             locker.unlock();
             for (auto node_id : nodes) {
-                //std::error_code ecode;
-                ghc::filesystem::remove(mm_to<memepp::native_string>(filepath(index_id, node_id)), ecode);
+                auto fpath = filepath(index_id, node_id);
+                log(level_t::trace, mm_view(
+                    fmt::format("try_clean_dir_to_limit; remove file operations; the file has been idle; file_path='{}'", fpath)));
+                ghc::filesystem::remove(mm_to<memepp::native_string>(fpath), ecode);
                 ++count;
             }
             continue;
@@ -1423,8 +1460,10 @@ outcome::checked<sqlite3_sequence::count_t, mgpp::err>
         {
             auto nit = index_info->nodes_.find(node_id);
             if (nit == index_info->nodes_.end()) {
-                //std::error_code ecode;
-                ghc::filesystem::remove(mm_to<memepp::native_string>(filepath(index_id, node_id)), ecode);
+                auto fpath = filepath(index_id, node_id);
+                log(level_t::trace, mm_view(
+                    fmt::format("try_clean_dir_to_limit; remove file operations; the file has been idle; file_path='{}'", fpath)));
+                ghc::filesystem::remove(mm_to<memepp::native_string>(fpath), ecode);
                 ++count;
                 continue;
             }
@@ -1450,16 +1489,21 @@ outcome::checked<sqlite3_sequence::count_t, mgpp::err>
                 node_locker.unlock();
             } while (0);
 
-            //std::error_code ecode;
+
             auto native_fpath = mm_to<memepp::native_string>(fpath);
             if (ghc::filesystem::exists(native_fpath, ecode) && !ecode)
             {
+                log(level_t::trace, mm_view(
+                    fmt::format("try_clean_dir_to_limit; remove file operations; file_path='{}'", fpath)));
                 ghc::filesystem::remove(native_fpath, ecode);
             }
             ++count;
         }
     }
 
+    log(level_t::trace, mm_view(
+        fmt::format("try_clean_dir_to_limit; total_kb='{}', max_kb_limit='{}', removed count='{}'", 
+        total_kb, max_kb_, count)));
     return outcome::success(count);
 }
 
@@ -1468,6 +1512,8 @@ outcome::checked<sqlite3_sequence::count_t, mgpp::err>
         node_id_t _less_than_node, node_id_t _more_than_node)
 {
     auto dir_u8path = dir_path();
+    log(level_t::trace, mm_view(
+        fmt::format("try_clean_dir_by_removing_out_of_range; dir_path='{}'", dir_u8path)));
 
     if (mgfs__is_exist_dir(dir_u8path.c_str(), dir_u8path.size()) != 1) 
     {
@@ -1544,6 +1590,8 @@ outcome::checked<sqlite3_sequence::count_t, mgpp::err>
         if (iit == index_infos_.end()) {
             locker.unlock();
             for (auto path : node_paths) {
+                log(level_t::trace, mm_view(
+                    fmt::format("try_clean_dir_by_removing_out_of_range; remove file operations; the file has been idle; file_path='{}'", path.second)));
                 ghc::filesystem::remove(path.second, ecode);
                 ++count;
             }
@@ -1559,6 +1607,8 @@ outcome::checked<sqlite3_sequence::count_t, mgpp::err>
             auto nit = index_info->nodes_.find(path.first);
             if (nit == index_info->nodes_.end()) {
                 index_locker.unlock();
+                log(level_t::trace, mm_view(
+                    fmt::format("try_clean_dir_by_removing_out_of_range; remove file operations; the file has been idle; file_path='{}'", path.second)));
                 ghc::filesystem::remove(path.second, ecode);
                 ++count;
                 continue;
@@ -1591,12 +1641,16 @@ outcome::checked<sqlite3_sequence::count_t, mgpp::err>
             
             if (ghc::filesystem::exists(path.second, ecode) && !ecode)
             {
+                log(level_t::trace, mm_view(
+                    fmt::format("try_clean_dir_by_removing_out_of_range; remove file operations; file_path='{}'", path.second)));
                 ghc::filesystem::remove(path.second, ecode);
             }
             ++count;
         }
     }
 
+    log(level_t::trace, mm_view(
+        fmt::format("try_clean_dir_by_removing_out_of_range; removed count='{}'", count)));
     return outcome::success(count);
 }
 
@@ -1903,6 +1957,8 @@ inline void sqlite3_sequence::on_close_hdl(const std::shared_ptr<void>& _userdat
     // remove operation
     if (!has_hdl && db_remove)
     {
+        log(level_t::trace, mm_view(
+            fmt::format("on_close_hdl; remove file operations; file_path='{}'", old_filepath)));
         ghc::filesystem::remove(mm_to<memepp::native_string>(old_filepath), ecode);
         if (ecode) {
             // TODO: log
