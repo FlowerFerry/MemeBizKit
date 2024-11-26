@@ -332,7 +332,8 @@ inline mgpp::err sqlite3_sequence::__node_info::try_remove()
     std::error_code ecode;
     if (ghc::filesystem::exists(native_src_path, ecode) && !ecode)
     {
-        log(level_t::trace, fmt::format("try_remove; remove file operations: file_path='{}'", src_path));
+        log(level_t::trace, mm_view(
+            fmt::format("try_remove; remove file operations: file_path='{}'", src_path)));
         ghc::filesystem::remove(native_src_path, ecode);
     }
     
