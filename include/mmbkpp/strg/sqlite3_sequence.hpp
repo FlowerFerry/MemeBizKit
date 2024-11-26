@@ -1320,8 +1320,8 @@ outcome::checked<sqlite3_sequence::count_t, mgpp::err>
 {
     auto dir_u8path = dir_path();
     log(level_t::trace, mm_view(
-        fmt::format("try_clean_dir_to_limit; sort='{}', dir_path='{}'", 
-        (_sort == sort_t::time_asc ? "time_asc" : "time_desc"), dir_u8path)));
+        fmt::format("try_clean_dir_to_limit; max_kb_limit='{}', sort='{}', dir_path='{}'", 
+        max_kb_, (_sort == sort_t::time_asc ? "time_asc" : "time_desc"), dir_u8path)));
 
     if (mgfs__is_exist_dir(dir_u8path.c_str(), dir_u8path.size()) != 1) 
     {
@@ -1509,8 +1509,8 @@ outcome::checked<sqlite3_sequence::count_t, mgpp::err>
     }
 
     log(level_t::trace, mm_view(
-        fmt::format("try_clean_dir_to_limit; total_kb='{}', max_kb_limit='{}', removed count='{}'", 
-        total_kb, max_kb_, count)));
+        fmt::format("try_clean_dir_to_limit; total_kb='{}', removed count='{}'", 
+        total_kb, count)));
     return outcome::success(count);
 }
 
