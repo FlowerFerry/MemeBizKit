@@ -332,8 +332,8 @@ inline mgpp::err sqlite3_sequence::__node_info::try_remove()
     std::error_code ecode;
     if (ghc::filesystem::exists(native_src_path, ecode) && !ecode)
     {
-        log(level_t::trace, mm_view(
-            fmt::format("try_remove; remove file operations: file_path='{}'", src_path)));
+        // log(level_t::trace, mm_view(
+        //     fmt::format("try_remove; remove file operations: file_path='{}'", src_path)));
         ghc::filesystem::remove(native_src_path, ecode);
     }
     
@@ -1958,7 +1958,7 @@ inline void sqlite3_sequence::on_close_hdl(const std::shared_ptr<void>& _userdat
     // remove operation
     if (!has_hdl && db_remove)
     {
-        log(level_t::trace, mm_view(
+        seq->log(level_t::trace, mm_view(
             fmt::format("on_close_hdl; remove file operations; file_path='{}'", old_filepath)));
         ghc::filesystem::remove(mm_to<memepp::native_string>(old_filepath), ecode);
         if (ecode) {
