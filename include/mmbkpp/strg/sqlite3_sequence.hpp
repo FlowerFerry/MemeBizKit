@@ -1320,8 +1320,8 @@ outcome::checked<sqlite3_sequence::count_t, mgpp::err>
 {
     auto dir_u8path = dir_path();
     log(level_t::trace, mm_view(
-        fmt::format("try_clean_dir_to_limit; max_kb_limit='{}', sort='{}', dir_path='{}'", 
-        max_kb_, (_sort == sort_t::time_asc ? "time_asc" : "time_desc"), dir_u8path)));
+        fmt::format("try_clean_dir_to_limit; sort='{}', dir_path='{}'", 
+        (_sort == sort_t::time_asc ? "time_asc" : "time_desc"), dir_u8path)));
 
     if (mgfs__is_exist_dir(dir_u8path.c_str(), dir_u8path.size()) != 1) 
     {
@@ -1398,6 +1398,9 @@ outcome::checked<sqlite3_sequence::count_t, mgpp::err>
     count_t count = 0;
 
     if (total_kb <= max_kb_) {
+        log(level_t::trace, mm_view(
+            fmt::format("try_clean_dir_to_limit; total_kb={}, max_kb_limit={}, no need to clean", 
+            total_kb, max_kb_)));
         return outcome::success(count);
     }
 
@@ -1407,7 +1410,12 @@ outcome::checked<sqlite3_sequence::count_t, mgpp::err>
 
     auto del_count = (total_kb - max_kb_) / avg_kb;
     if (MG_SYM__LIKELY(del_count <= 0))
+    {
+        log(level_t::trace, mm_view(
+            fmt::format("try_clean_dir_to_limit; total_kb={}, max_kb_limit={}, no need to clean", 
+            total_kb, max_kb_)));
         return outcome::success(count);
+    }
 
     std::map<index_id_t, std::set<node_id_t>> dels;
     if (_sort == sort_t::time_asc) 
@@ -1509,7 +1517,7 @@ outcome::checked<sqlite3_sequence::count_t, mgpp::err>
     }
 
     log(level_t::trace, mm_view(
-        fmt::format("try_clean_dir_to_limit; total_kb='{}', removed count='{}'", 
+        fmt::format("try_clean_dir_to_limit; total_kb={}, removed count={}", 
         total_kb, count)));
     return outcome::success(count);
 }
@@ -1657,7 +1665,7 @@ outcome::checked<sqlite3_sequence::count_t, mgpp::err>
     }
 
     log(level_t::trace, mm_view(
-        fmt::format("try_clean_dir_by_removing_out_of_range; removed count='{}'", count)));
+        fmt::format("try_clean_dir_by_removing_out_of_range; removed count={}", count)));
     return outcome::success(count);
 }
 
