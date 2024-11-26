@@ -907,7 +907,10 @@ inline void sqlite3_sequence::set_open_after_create_table_cb(
     const open_after_create_table_cb_t& _cb)
 {
     std::lock_guard<std::mutex> locker(mtx_);
-    open_after_create_table_cb_ = std::make_shared<open_after_create_table_cb_t>(_cb);
+    if (_cb)
+        open_after_create_table_cb_ = std::make_shared<open_after_create_table_cb_t>(_cb);
+    else
+        open_after_create_table_cb_.reset();
 }
 
 inline void sqlite3_sequence::set_max_kb(mmint_t _max_kb)
@@ -925,7 +928,10 @@ inline void sqlite3_sequence::set_max_hdl_count(mmint_t _count)
 inline void sqlite3_sequence::set_log_cb(const log_cb_t& _cb)
 {
     std::lock_guard<std::mutex> locker(mtx_);
-    log_cb_ = std::make_shared<log_cb_t>(_cb);
+    if (_cb)
+        log_cb_ = std::make_shared<log_cb_t>(_cb);
+    else
+        log_cb_.reset();
 }
 
 inline void sqlite3_sequence::set_table_name(const memepp::string& _name)
