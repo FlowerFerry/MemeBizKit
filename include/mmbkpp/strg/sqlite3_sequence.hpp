@@ -1478,11 +1478,13 @@ outcome::checked<sqlite3_sequence::count_t, mgpp::err>
         auto index_info = iit->second;
         locker.unlock();
 
-        std::unique_lock<std::mutex> index_locker(index_info->mtx_);
         for (auto node_id : nodes) 
         {
+            std::unique_lock<std::mutex> index_locker(index_info->mtx_);
             auto nit = index_info->nodes_.find(node_id);
             if (nit == index_info->nodes_.end()) {
+                index_locker.unlock();
+                
                 auto fpath = filepath(index_id, node_id);
                 log(level_t::trace, mm_view(
                     fmt::format("try_clean_dir_to_limit; remove file operations; the file has been idle; file_path='{}'", fpath)));
