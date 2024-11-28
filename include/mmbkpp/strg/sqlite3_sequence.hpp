@@ -1484,7 +1484,7 @@ outcome::checked<sqlite3_sequence::count_t, mgpp::err>
             auto nit = index_info->nodes_.find(node_id);
             if (nit == index_info->nodes_.end()) {
                 index_locker.unlock();
-                
+
                 auto fpath = filepath(index_id, node_id);
                 log(level_t::trace, mm_view(
                     fmt::format("try_clean_dir_to_limit; remove file operations; the file has been idle; file_path='{}'", fpath)));
@@ -1502,6 +1502,8 @@ outcome::checked<sqlite3_sequence::count_t, mgpp::err>
                 node_info->dbfile_status_ = dbfile_status_t::wait_for_remove;
                 node_info->hdl_status_ = hdl_status_t::unavailabled;
                 node_locker.unlock();
+                log(level_t::trace, mm_view(
+                    fmt::format("try_clean_dir_to_limit; remove file operations; wait for remove; file_path='{}'", node_info->filepath__st())));
                 continue;
             }
 
