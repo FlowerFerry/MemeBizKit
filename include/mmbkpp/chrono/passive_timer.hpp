@@ -75,7 +75,7 @@ namespace chrono {
 		
 		inline bool timing_notcall(mgu_timestamp_t _curr)
 		{
-			if (!interval_ || !isStart_)
+			if (interval_ <= 0 || !isStart_)
 				return true;
 			if (_curr < lastTs_) {
 				lastTs_ = _curr;
@@ -487,8 +487,6 @@ namespace chrono {
 			bool isDie = false;
             if ((*it)->timing(_curr, &isDie))
             {
-				//locked_ = false;
-
 				if (remove_and_iteration(it)) 
 				{
 					locked_ = false;
@@ -506,8 +504,9 @@ namespace chrono {
 				_curr = mgu_timestamp_get();
 				hasCall = true;
             }
-            else
-                ++it;
+			else {
+				++it;
+			}
         }
 
         locked_ = false;
