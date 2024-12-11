@@ -466,12 +466,13 @@ namespace chrono {
 	
 	inline bool ticker::wheel_timing(mgu_timestamp_t _curr)
 	{
+		auto ts = _curr;
 		auto cleanup = megopp::util::scope_cleanup__create([&]
 		{
 			if (!wait_accepts_.empty()) {
 				for (auto it = wait_accepts_.begin(); it != wait_accepts_.end(); ++it)
 				{
-					accept(*it, _curr);
+					accept(*it, ts);
 				}
 				wait_accepts_.clear();
 			}
@@ -485,7 +486,7 @@ namespace chrono {
 				continue;
 
 			bool isDie = false;
-            if ((*it)->timing(_curr, &isDie))
+            if ((*it)->timing(ts, &isDie))
             {
 				if (remove_and_iteration(it)) 
 				{
@@ -501,7 +502,7 @@ namespace chrono {
 				}
 
 				std::this_thread::yield();
-				_curr = mgu_timestamp_get();
+				ts = mgu_timestamp_get();
 				hasCall = true;
             }
 			else {
