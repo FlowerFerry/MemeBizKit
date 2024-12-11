@@ -25,6 +25,9 @@ namespace chrono {
 	public:
         typedef bool callback_t(passive_timer*, void*);
 
+		static const intptr_t invalid_due_time = INTPTR_MAX;
+		static const intptr_t max_due_time = INTPTR_MAX - 1;
+
 		passive_timer() noexcept :
 			//ticker_(nullptr),
 			isStart_(false),
@@ -108,15 +111,15 @@ namespace chrono {
 
 		inline intptr_t due_in(mgu_timestamp_t _curr) const noexcept
 		{
-			if (is_start()) {
-				if (_curr < lastTs_) {
-					return 0;
-				}
-				auto count = count_ + (_curr - lastTs_);
-				if (count < interval_)
-					return interval_ - count;
+			if (!is_start())
+				return max_due_time;
+
+			if (_curr < lastTs_) {
+				return 0;
 			}
-			return 0;
+
+			auto count = count_ + (_curr - lastTs_);
+			return interval_ - count;
 		}
 
 	private:
@@ -447,9 +450,10 @@ namespace chrono {
 			}
 		}
 
+		auto due_time = _timer->due_in(_curr);
 		for (auto it = timers_.begin(); it != timers_.end();)
 		{
-			if (intptr_t(_timer->interval()) < (*it)->due_in(_curr))
+			if (due_time < (*it)->due_in(_curr))
 			{
 				timers_.insert(it, _timer);
 				return;
