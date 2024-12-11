@@ -468,11 +468,10 @@ namespace chrono {
 	{
 		auto cleanup = megopp::util::scope_cleanup__create([&]
 		{
-			auto ts = mgu_timestamp_get();
 			if (!wait_accepts_.empty()) {
 				for (auto it = wait_accepts_.begin(); it != wait_accepts_.end(); ++it)
 				{
-					accept(*it, ts);
+					accept(*it, _curr);
 				}
 				wait_accepts_.clear();
 			}
@@ -502,6 +501,7 @@ namespace chrono {
 				}
 
 				std::this_thread::yield();
+				_curr = mgu_timestamp_get();
 				hasCall = true;
             }
 			else {
