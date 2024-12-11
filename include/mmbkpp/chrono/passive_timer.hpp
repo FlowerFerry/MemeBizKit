@@ -501,7 +501,7 @@ namespace chrono {
 				}
 
 				std::this_thread::yield();
-				_curr = mgu_timestamp_get();
+				//_curr = mgu_timestamp_get();
 				hasCall = true;
             }
 			else {
