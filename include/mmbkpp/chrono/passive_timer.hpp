@@ -467,7 +467,7 @@ namespace chrono {
 	inline bool ticker::wheel_timing(mgu_timestamp_t _curr)
 	{
 		auto ts = _curr;
-		auto cleanup = megopp::util::scope_cleanup__create([&]
+		auto accepts_cleanup = megopp::util::scope_cleanup__create([&]
 		{
 			if (!wait_accepts_.empty()) {
 				for (auto it = wait_accepts_.begin(); it != wait_accepts_.end(); ++it)
@@ -480,6 +480,8 @@ namespace chrono {
 
 		bool hasCall = false;
         locked_ = true;
+		MEGOPP_UTIL__ON_SCOPE_CLEANUP([&] { locked_ = false; });
+
         for (auto it = timers_.begin(); it != timers_.end();)
         {
 			if (remove_and_iteration(it))
@@ -490,7 +492,6 @@ namespace chrono {
             {
 				if (remove_and_iteration(it)) 
 				{
-					locked_ = false;
 					return true;
 				}
 
@@ -510,7 +511,6 @@ namespace chrono {
 			}
         }
 
-        locked_ = false;
 		return hasCall;
 	}
 
