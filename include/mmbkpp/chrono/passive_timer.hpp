@@ -136,7 +136,7 @@ namespace chrono {
 		bool isStart_;
 		bool isOnce_;
 		intptr_t interval_;
-		intptr_t count_;
+		int64_t count_;
 		mgu_timestamp_t lastTs_;
 		
         void* userdata_;
@@ -201,10 +201,10 @@ namespace chrono {
 		//	internal_accept(
 		//		passive_timer* _timer, mgu_timestamp_t _curr) noexcept;
 
-        bool locked_;
 		std::vector<passive_timer*> timers_;
         std::vector<passive_timer*> wait_accepts_;
         std::set<passive_timer*> wait_removes_;
+        bool locked_;
 	};
 	using ticker_ptr = std::shared_ptr<ticker>;
 
