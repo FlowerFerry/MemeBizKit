@@ -3,6 +3,7 @@
 #define MMBKPP_CHRONO_PASSIVE_TIMER_HPP_INCLUDED
 
 #include <mego/util/std/time.h>
+#include <mego/predef/symbol/likely.h>
 
 #include <thread>
 #include <memory>
@@ -77,10 +78,16 @@ namespace chrono {
 		{
 			if (interval_ <= 0 || !isStart_)
 				return true;
-			if (_curr < lastTs_) {
+
+			if (MG_SYM__UNLIKELY(_curr < lastTs_)) 
+			{
 				lastTs_ = _curr;
 				return true;
 			}
+
+			if (MG_SYM__UNLIKELY(count_ < 0))
+				count_ = 0;
+
 			count_ += (_curr - lastTs_);
             lastTs_ = _curr;
 			return false;
@@ -114,7 +121,8 @@ namespace chrono {
 			if (!is_start())
 				return max_due_time;
 
-			if (_curr < lastTs_) {
+			if (MG_SYM__UNLIKELY(_curr < lastTs_))
+			{
 				return 0;
 			}
 
