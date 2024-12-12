@@ -1406,7 +1406,7 @@ outcome::checked<sqlite3_sequence::count_t, mgpp::err>
     count_t count = 0;
 
     if (total_kb <= max_kb_) {
-        log(level_t::trace, mm_view(
+        log(level_t::info, mm_view(
             fmt::format("try_clean_dir_to_limit; total_kb={}, max_kb_limit={}, no need to clean", 
             total_kb, max_kb_)));
         return outcome::success(count);
@@ -1414,12 +1414,17 @@ outcome::checked<sqlite3_sequence::count_t, mgpp::err>
 
     auto avg_kb = total_count > 0 ? double(total_kb) / total_count : double(total_kb);
     if (MG_SYM__LIKELY(avg_kb == 0))
+    {
+        log(level_t::info, mm_view(
+            fmt::format("try_clean_dir_to_limit; total_kb={}, max_kb_limit={}, no need to clean", 
+            total_kb, max_kb_)));
         return outcome::success(count);
+    }
 
     auto del_count = (total_kb - max_kb_) / avg_kb;
     if (MG_SYM__LIKELY(del_count <= 0))
     {
-        log(level_t::trace, mm_view(
+        log(level_t::info, mm_view(
             fmt::format("try_clean_dir_to_limit; total_kb={}, max_kb_limit={}, no need to clean", 
             total_kb, max_kb_)));
         return outcome::success(count);
@@ -1528,9 +1533,9 @@ outcome::checked<sqlite3_sequence::count_t, mgpp::err>
         }
     }
 
-    log(level_t::trace, mm_view(
-        fmt::format("try_clean_dir_to_limit; total_kb={}, removed count={}", 
-        total_kb, count)));
+    log(level_t::info, mm_view(
+        fmt::format("try_clean_dir_to_limit; total_kb={}, removed avg_kb={}, removed count={}", 
+        total_kb, avg_kb, count)));
     return outcome::success(count);
 }
 
