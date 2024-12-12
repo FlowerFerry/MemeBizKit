@@ -1259,10 +1259,11 @@ inline void sqlite3_sequence::log(level_t _level, const memepp::string_view& _ms
     std::unique_lock locker{ mtx_ };
     if (!log_cb_)
         return;
+    auto log_cb = log_cb_;
     locker.unlock();
 
     try {
-        (*log_cb_)(_level, _msg);
+        (*log_cb)(_level, _msg);
     }
     catch (...) {
     }
