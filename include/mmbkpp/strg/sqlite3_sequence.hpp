@@ -1240,7 +1240,6 @@ inline outcome::checked<sqlite3_hdl_sptr, mgpp::err>
 
     hdl_ret.value()->set_userdata(data);
     hdl_ret.value()->set_close_cb(on_close_hdl);
-    hdl_ret.value()->set_preclose_cb(on_preclose_hdl);
 
     node_locker.lock();
     node_info->set_hdl__st(_is_readonly, hdl_ret.value());
