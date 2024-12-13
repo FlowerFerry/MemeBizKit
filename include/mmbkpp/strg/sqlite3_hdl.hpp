@@ -24,6 +24,7 @@ namespace mmbkpp { namespace strg {
 struct sqlite3_hdl
 {
     typedef void(*close_cb_t)(const std::shared_ptr<void>&);
+    typedef void(*preclose_cb_t)(sqlite3_hdl*, const std::shared_ptr<void>&);
 
     sqlite3_hdl() = delete;
     sqlite3_hdl(const sqlite3_hdl&) = delete;
@@ -33,11 +34,24 @@ struct sqlite3_hdl
 
     ~sqlite3_hdl() noexcept
     {
+        if (on_preclose_)
+        {
+            try {
+                on_preclose_(this, userdata_);
+            }
+            catch (...) {
+            }
+        }
+
         if (MEGO_SYMBOL__LIKELY(hdl_ != nullptr))
             ::sqlite3_close(hdl_);
 
         if (on_close_) {
-            on_close_(userdata_);
+            try {
+                on_close_(userdata_);
+            }
+            catch (...) {
+            }
         }
     }
 
@@ -49,6 +63,11 @@ struct sqlite3_hdl
     inline void set_close_cb(close_cb_t cb) noexcept
     {
         on_close_ = cb;
+    }
+
+    inline void set_preclose_cb(preclose_cb_t cb) noexcept
+    {
+        on_preclose_ = cb;
     }
 
     inline void set_userdata(const std::shared_ptr<void>& userdata) noexcept
@@ -111,6 +130,7 @@ private:
 
     ::sqlite3* hdl_;
     close_cb_t on_close_;
+    preclose_cb_t on_preclose_;
     std::shared_ptr<void> userdata_;
 };
 using sqlite3_hdl_uptr = std::unique_ptr<sqlite3_hdl>;

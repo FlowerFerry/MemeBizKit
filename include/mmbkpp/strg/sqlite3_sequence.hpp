@@ -149,6 +149,7 @@ struct sqlite3_sequence : public std::enable_shared_from_this<sqlite3_sequence>
         index_id_t _index, node_id_t _node);
 
     static void on_close_hdl(const std::shared_ptr<void>& _userdata);
+    static void on_preclose_hdl(sqlite3_hdl* _hdl, const std::shared_ptr<void>& _userdata);
 
     static bool remove_sqlite_file(const ghc::filesystem::path& _path, std::error_code& _ec);
 private:
@@ -1239,6 +1240,7 @@ inline outcome::checked<sqlite3_hdl_sptr, mgpp::err>
 
     hdl_ret.value()->set_userdata(data);
     hdl_ret.value()->set_close_cb(on_close_hdl);
+    hdl_ret.value()->set_preclose_cb(on_preclose_hdl);
 
     node_locker.lock();
     node_info->set_hdl__st(_is_readonly, hdl_ret.value());
@@ -2013,6 +2015,11 @@ inline void sqlite3_sequence::on_close_hdl(const std::shared_ptr<void>& _userdat
         index_locker.unlock();
     }
 
+}
+
+inline void sqlite3_sequence::on_preclose_hdl(sqlite3_hdl* _hdl, const std::shared_ptr<void>& _userdata)
+{
+    _hdl->do_write("PRAGMA wal_checkpoint(TRUNCATE);");
 }
 
 inline bool sqlite3_sequence::remove_sqlite_file(const ghc::filesystem::path& _path, std::error_code& _ec)
