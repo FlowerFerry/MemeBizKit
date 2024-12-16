@@ -41,12 +41,12 @@ struct request_handler
 
     template<typename = std::enable_if_t<
         std::is_same<_Mutex, mgpp::help::null_mutex>::value>>
-    inline void set_request_cb(request_cb_t  _cb)
+    inline void set_request_cb(const request_cb_t& _cb)
     {
         request_cb_ = _cb;
     }
 
-    inline void set_request_cb(request_cb_t  _cb, std::unique_lock<_Mutex>& _lock)
+    inline void set_request_cb(const request_cb_t& _cb, std::unique_lock<_Mutex>& _lock)
     {
         mgpp::util::scope_unique_locker<_Mutex> locker(_lock);
         request_cb_ = _cb;
@@ -54,12 +54,12 @@ struct request_handler
     
     template<typename = std::enable_if_t<
         std::is_same<_Mutex, mgpp::help::null_mutex>::value>>
-    inline void set_response_cb(response_cb_t _cb)
+    inline void set_response_cb(const response_cb_t& _cb)
     {
         response_cb_ = _cb;
     }
 
-    inline void set_response_cb(response_cb_t _cb, std::unique_lock<_Mutex>& _lock)
+    inline void set_response_cb(const response_cb_t& _cb, std::unique_lock<_Mutex>& _lock)
     {
         mgpp::util::scope_unique_locker<_Mutex> locker(_lock);
         response_cb_ = _cb;
