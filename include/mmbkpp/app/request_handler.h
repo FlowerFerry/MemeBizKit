@@ -122,15 +122,15 @@ struct request_handler
 
     template<typename = std::enable_if_t<
         std::is_same<_Mutex, mgpp::help::null_mutex>::value>>
-    inline std::tuple<request_id_t, mgpp::err> enqueue(const request_object_t& _req)
+    inline std::tuple<request_id_t, mgpp::err> enqueue(request_object_t _req)
     {
         mgpp::help::null_mutex mutex;
         std::unique_lock<mgpp::help::null_mutex> locker(mutex, std::defer_lock_t{});
-        return enqueue(_req, locker);
+        return enqueue(std::move(_req), locker);
     }
     
     inline std::tuple<request_id_t, mgpp::err> enqueue(
-        const request_object_t& _req, std::unique_lock<_Mutex>& _lock)
+        request_object_t _req, std::unique_lock<_Mutex>& _lock)
     {
         mgpp::util::scope_unique_locker<_Mutex> locker{ _lock };
         if (req_queue_.size() >= __max_queue__sync()) 
@@ -144,7 +144,7 @@ struct request_handler
         locker.unlock();
         auto req = std::make_shared<request_t>();
         req->id  = reqid;
-        req->obj = _req;
+        req->obj = std::move(_req);
         req->timer.set_interval(ms);
         req->timeout_cb = [this, reqid]() 
         { 
