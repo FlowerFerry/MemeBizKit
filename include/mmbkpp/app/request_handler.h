@@ -36,7 +36,7 @@ struct request_handler
     using request_cb_t  = 
         std::function<mgpp::err(request_id_t, retry_state_t, const request_object_t&)>;
     using response_cb_t =
-        std::function<mgpp::err(request_id_t, const request_object_t&, const response_object_t*, mgpp::err)>;
+        std::function<mgpp::err(request_id_t, const request_object_t&, const response_object_t*, const mgpp::err&)>;
 
 
     template<typename = std::enable_if_t<
