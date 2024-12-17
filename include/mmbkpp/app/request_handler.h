@@ -41,6 +41,19 @@ struct request_handler
 
     template<typename = std::enable_if_t<
         std::is_same<_Mutex, mgpp::help::null_mutex>::value>>
+    inline void set_serialize_flag(bool _flag)
+    {
+        serialize_flag_ = _flag;
+    }
+
+    inline void set_serialize_flag(bool _flag, std::unique_lock<_Mutex>& _lock)
+    {
+        mgpp::util::scope_unique_locker<_Mutex> locker(_lock);
+        serialize_flag_ = _flag;
+    }
+
+    template<typename = std::enable_if_t<
+        std::is_same<_Mutex, mgpp::help::null_mutex>::value>>
     inline void set_request_cb(const request_cb_t& _cb)
     {
         request_cb_ = _cb;
