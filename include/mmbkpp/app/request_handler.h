@@ -20,19 +20,22 @@
 namespace mmbkpp {
 namespace app {
 
+enum class reqhdlr_retry_state_t : uint8_t
+{
+    first = 0,
+    retry = 1,
+};
+
+using reqhdlr_request_id_t = mmint_t;
+
 template<typename _RequestObject, typename _ResponseObject, 
     typename _Mutex = mgpp::help::null_mutex>
 struct request_handler 
 {
-    enum class retry_state_t : uint8_t
-    {
-        first = 0,
-        retry = 1,
-    };
-
+    using retry_state_t = reqhdlr_retry_state_t;
     using request_object_t  = _RequestObject;
     using response_object_t = _ResponseObject;
-    using request_id_t  = mmint_t;
+    using request_id_t  = reqhdlr_request_id_t;
     using request_cb_t  = 
         std::function<mgpp::err(request_id_t, retry_state_t, const request_object_t&)>;
     using response_cb_t =
