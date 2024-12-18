@@ -42,90 +42,45 @@ struct request_handler
         std::function<mgpp::err(request_id_t, const request_object_t&, const response_object_t*, const mgpp::err&)>;
 
 
-    template<typename = std::enable_if_t<
-        std::is_same<_Mutex, mgpp::help::null_mutex>::value>>
     inline void set_serialize_flag(bool _flag)
     {
+        std::unique_lock locker{ mutex_ };
         serialize_flag_ = _flag;
     }
 
-    inline void set_serialize_flag(bool _flag, std::unique_lock<_Mutex>& _lock)
-    {
-        mgpp::util::scope_unique_locker<_Mutex> locker(_lock);
-        serialize_flag_ = _flag;
-    }
-
-    template<typename = std::enable_if_t<
-        std::is_same<_Mutex, mgpp::help::null_mutex>::value>>
     inline void set_request_cb(const request_cb_t& _cb)
     {
+        std::unique_lock locker{ mutex_ };
         request_cb_ = _cb;
     }
 
-    inline void set_request_cb(const request_cb_t& _cb, std::unique_lock<_Mutex>& _lock)
-    {
-        mgpp::util::scope_unique_locker<_Mutex> locker(_lock);
-        request_cb_ = _cb;
-    }
-    
-    template<typename = std::enable_if_t<
-        std::is_same<_Mutex, mgpp::help::null_mutex>::value>>
     inline void set_response_cb(const response_cb_t& _cb)
     {
+        std::unique_lock locker{ mutex_ };
         response_cb_ = _cb;
     }
 
-    inline void set_response_cb(const response_cb_t& _cb, std::unique_lock<_Mutex>& _lock)
-    {
-        mgpp::util::scope_unique_locker<_Mutex> locker(_lock);
-        response_cb_ = _cb;
-    }
-
-    template<typename = std::enable_if_t<
-        std::is_same<_Mutex, mgpp::help::null_mutex>::value>>
     inline void set_timeout(mmint_t _timeout)
     {
+        std::unique_lock locker{ mutex_ };
         timeout_ms_ = _timeout;
     }
 
-    inline void set_timeout(mmint_t _timeout, std::unique_lock<_Mutex>& _lock)
-    {
-        mgpp::util::scope_unique_locker<_Mutex> locker(_lock);
-        timeout_ms_ = _timeout;
-    }
-
-    template<typename = std::enable_if_t<
-        std::is_same<_Mutex, mgpp::help::null_mutex>::value>>
     inline void set_max_queue(mmint_t _max_queue)
     {
+        std::unique_lock locker{ mutex_ };
         max_queue_ = _max_queue;
     }
 
-    inline void set_max_queue(mmint_t _max_queue, std::unique_lock<_Mutex>& _lock)
-    {
-        mgpp::util::scope_unique_locker<_Mutex> locker(_lock);
-        max_queue_ = _max_queue;
-    }
-
-    template<typename = std::enable_if_t<
-        std::is_same<_Mutex, mgpp::help::null_mutex>::value>>
     inline void set_max_retry(size_t  _max_retry)
     {
+        std::unique_lock locker{ mutex_ };
         max_retry_ = _max_retry;
     }
 
-    inline void set_max_retry(size_t  _max_retry, std::unique_lock<_Mutex>& _lock)
-    {
-        mgpp::util::scope_unique_locker<_Mutex> locker(_lock);
-        max_retry_ = _max_retry;
-    }
-
-    template<typename = std::enable_if_t<
-        std::is_same<_Mutex, mgpp::help::null_mutex>::value>>
     inline std::tuple<request_id_t, mgpp::err> enqueue(request_object_t _req)
     {
-        mgpp::help::null_mutex mutex;
-        std::unique_lock<mgpp::help::null_mutex> locker(mutex, std::defer_lock_t{});
+        std::unique_lock locker{ mutex_ };
         return enqueue(std::move(_req), locker);
     }
     
@@ -156,12 +111,9 @@ struct request_handler
         return std::make_tuple(reqid, mgpp::err{});
     }
 
-    template<typename = std::enable_if_t<
-        std::is_same<_Mutex, mgpp::help::null_mutex>::value>>
     inline mgpp::err response_success(request_id_t _id, const response_object_t& _resp)
     {
-        mgpp::help::null_mutex mutex;
-        std::unique_lock<mgpp::help::null_mutex> locker(mutex);
+        std::unique_lock locker{ mutex_ };
         return response_success(_id, _resp, locker);
     }
 
@@ -184,12 +136,9 @@ struct request_handler
         return {};
     }
 
-    template<typename = std::enable_if_t<
-        std::is_same<_Mutex, mgpp::help::null_mutex>::value>>
     inline mgpp::err response_failure(request_id_t _id, const mgpp::err& _err)
     {
-        mgpp::help::null_mutex mutex;
-        std::unique_lock<mgpp::help::null_mutex> locker(mutex);
+        std::unique_lock locker{ mutex_ };
         return response_failure(_id, _err, locker);
     }
 
@@ -222,12 +171,9 @@ struct request_handler
         return {};
     }
 
-    template<typename = std::enable_if_t<
-        std::is_same<_Mutex, mgpp::help::null_mutex>::value>>
     inline mmint_t poll_check(mgu_timestamp_t _now) const
     {
-        mgpp::help::null_mutex mutex;
-        std::unique_lock<mgpp::help::null_mutex> locker(mutex);
+        std::unique_lock locker{ mutex_ };
         return poll_check(_now, locker);
     }
 
@@ -244,12 +190,9 @@ struct request_handler
         return 0;
     }
 
-    template<typename = std::enable_if_t<
-        std::is_same<_Mutex, mgpp::help::null_mutex>::value>>
     inline mgpp::err poll(mgu_timestamp_t _now)
     {
-        mgpp::help::null_mutex mutex;
-        std::unique_lock<mgpp::help::null_mutex> locker(mutex);
+        std::unique_lock locker{ mutex_ };
         return poll(_now, locker);
     }
 
@@ -383,6 +326,7 @@ private:
     };
     using response_ptr_t = std::shared_ptr<response_t>;
 
+    mutable _Mutex mutex_;
     request_cb_t  request_cb_;
     response_cb_t response_cb_;
     mmint_t       timeout_ms_  = 3000;
