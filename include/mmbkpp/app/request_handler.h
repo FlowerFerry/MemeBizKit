@@ -278,7 +278,7 @@ private:
         auto ts = mgu_timestamp_get();
         req->timer.start_once(ts);
 
-        auto err = cb(req->id, req->retry ? retry_state_t::retry : retry_state_t::first, req->obj);
+        auto err = req_cb(req->id, req->retry ? retry_state_t::retry : retry_state_t::first, req->obj);
         if (err) {
             req->timer.cancel();
             _locker.lock();
