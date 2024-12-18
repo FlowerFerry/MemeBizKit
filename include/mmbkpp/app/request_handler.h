@@ -45,7 +45,7 @@ struct request_handler
     inline void set_serialize_flag(bool _flag)
     {
         std::unique_lock locker{ mutex_ };
-        serialize_flag_ = _flag;
+        serialize_ = _flag;
     }
 
     inline void set_request_cb(const request_cb_t& _cb)
