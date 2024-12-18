@@ -198,8 +198,6 @@ struct request_handler
 
     mgpp::err poll(mgu_timestamp_t _now, std::unique_lock<_Mutex>& _lock)
     {
-        ticklock_ = &_lock;
-        MEGOPP_UTIL__ON_SCOPE_CLEANUP([&] { ticklock_ = nullptr; });
 
         mgpp::err err;
         mgpp::util::scope_unique_locker<_Mutex> locker{ _lock, std::defer_lock_t{} };
@@ -333,7 +331,6 @@ private:
     mmint_t       max_queue_   = 1000;
     size_t        max_retry_   = 3;
     size_t        curr_id_idx_ = 0;
-    std::unique_lock<_Mutex>* ticklock_ = nullptr;
     bool serialize_ = false;
     mmbkpp::chrono::ticker_ptr ticker_ = std::make_shared<mmbkpp::chrono::ticker>();
     std::deque<request_ptr_t>  req_queue_;
