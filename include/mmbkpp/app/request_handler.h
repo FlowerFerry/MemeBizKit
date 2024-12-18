@@ -304,7 +304,7 @@ private:
         return curr_id_idx_;
     }
 
-    inline void __log(level, const std::string&) const noexcept
+    inline void __log(log::level, const std::string&) const noexcept
     {
         // TODO
     }
