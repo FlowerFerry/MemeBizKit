@@ -94,12 +94,14 @@ struct request_handler
             return std::make_tuple(0, mgpp::err{ MGEC__ERR });
         }
 
-        auto reqid = __get_next_id__sync();
-        auto ms    = __timeout__sync();
+        auto reqid  = __get_next_id__sync();
+        auto ms     = __timeout__sync();
+        auto ticker = ticker_;
         locker.unlock();
         auto req = std::make_shared<request_t>();
         req->id  = reqid;
         req->obj = std::move(_req);
+        req->timer.set_ticker(ticker);
         req->timer.set_interval(ms);
         req->timeout_cb = [this, reqid]() 
         { 
