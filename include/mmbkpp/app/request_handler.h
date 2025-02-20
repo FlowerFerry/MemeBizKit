@@ -186,9 +186,9 @@ struct request_handler
             return 0;
         locker.unlock();
 
-        auto iv = ticker_->due_in(_now);
-        if (iv > 0)
-            return mmint_t(iv);
+        // auto iv = ticker_->due_in(_now);
+        // if (iv > 0)
+        //     return mmint_t(iv);
         return 0;
     }
 

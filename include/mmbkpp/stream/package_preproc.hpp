@@ -303,7 +303,8 @@ namespace stream {
     
     inline mmint_t package_preproc::poll_check(mgu_timestamp_t _now) const
     {
-        auto iv = recv_wait_timer_.due_in(_now);
+        // auto iv = recv_wait_timer_.due_in(_now);
+        auto iv = 0;
         if (!iv)
             return 0;
         if (!recv_wait_cache_.empty())
