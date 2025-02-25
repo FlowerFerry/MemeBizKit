@@ -122,7 +122,7 @@ namespace stream {
         if (!recv_wait_cache_.empty()) {
             mmint_t offset = 0;
             auto err = raw_input_part(recv_wait_cache_, _now, &offset);
-            if (err && err.code() != mgpp::make_err_cond(MGEC__AGAIN, mgpp::get_genrc_err_cat()))
+            if (err && err != mgpp::make_err_cond(MGEC__AGAIN, mgpp::get_genrc_err_cat()))
             {
                 return err;
             }
@@ -137,7 +137,7 @@ namespace stream {
         if (!_buf.empty()) {
             mmint_t offset = 0;
             auto err = raw_input_part(_buf, _now, &offset);
-            if (err && err.code() != mgpp::make_err_cond(MGEC__AGAIN, mgpp::get_genrc_err_cat()))
+            if (err && err != mgpp::make_err_cond(MGEC__AGAIN, mgpp::get_genrc_err_cat()))
             {
                 return err;
             }
