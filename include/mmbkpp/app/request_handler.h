@@ -81,11 +81,17 @@ struct request_handler
     inline std::tuple<request_id_t, mgpp::err> enqueue(request_object_t _req)
     {
         std::unique_lock locker{ mutex_ };
-        return enqueue(std::move(_req), locker);
+        return enqueue(std::move(_req), -1, locker);
     }
     
+    inline std::tuple<request_id_t, mgpp::err> enqueue(request_object_t _req, mmint_t _timeout_ms)
+    {
+        std::unique_lock locker{ mutex_ };
+        return enqueue(std::move(_req), _timeout_ms, locker);
+    }
+
     inline std::tuple<request_id_t, mgpp::err> enqueue(
-        request_object_t _req, std::unique_lock<_Mutex>& _lock)
+        request_object_t _req, mmint_t _timeout_ms, std::unique_lock<_Mutex>& _lock)
     {
         mgpp::util::scope_unique_locker<_Mutex> locker{ _lock };
         if (req_queue_.size() >= __max_queue__sync()) 
@@ -102,6 +108,8 @@ struct request_handler
         req->id  = reqid;
         req->obj = std::move(_req);
         req->timer.set_ticker(ticker);
+        if (_timeout_ms > 0)
+            ms = _timeout_ms;
         req->timer.set_interval(ms);
         req->timeout_cb = [this, reqid]() 
         { 
@@ -312,9 +320,10 @@ private:
 
         request_id_t id = 0;
         size_t retry = 0;
+        mmint_t timeout_ms_ = -1;
         mmbkpp::chrono::passive_timer timer;
-        request_object_t obj;
         std::function<bool()> timeout_cb;
+        request_object_t obj;
     };
     using request_ptr_t = std::shared_ptr<request_t>;
 
