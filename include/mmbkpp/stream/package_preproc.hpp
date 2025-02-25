@@ -263,40 +263,41 @@ namespace stream {
                     return MGEC__AGAIN;
                 }
 
-                mgpp::err err;
-                size_t calc_len = 0;
-                err = calc_len_cb_(recv_curr_cache_, _buf, &calc_len, userdata_);
-                if (err)
-                    return err;
+            }
 
-                if (calc_len > max_limit_package_size())
-                    return MGEC__PROTO;
+            mgpp::err err;
+            size_t calc_len = 0;
+            err = calc_len_cb_(recv_curr_cache_, _buf, &calc_len, userdata_);
+            if (err)
+                return err;
 
-                if (recv_curr_cache_.size() + _buf.size() < mmint_t(calc_len)) {
-                    recv_curr_cache_.append(_buf);
-                    *_offset = _buf.size();
-                    if (!recv_wait_timer_.is_start())
-                        recv_wait_timer_.start_once(_now);
-                    return 0;
-                }
+            if (calc_len > max_limit_package_size())
+                return MGEC__PROTO;
 
-                auto diff = mmint_t(calc_len) - recv_curr_cache_.size();
-                recv_curr_cache_.append(_buf.data(), diff);
-
-                err = chksum_succ_cb_(
-                    memepp::buffer_view{ recv_curr_cache_.data(), mmint_t(calc_len) }, userdata_);
-                if (err) {
-                    *_offset = diff;
-                    return err;
-                }
-                
-                recv_cb_(recv_curr_cache_, this, userdata_);
-                recv_curr_cache_.clear();
-                *_offset = diff;
-                if (recv_wait_timer_.is_start())
-                    recv_wait_timer_.cancel();
+            if (recv_curr_cache_.size() + _buf.size() < mmint_t(calc_len)) {
+                recv_curr_cache_.append(_buf);
+                *_offset = _buf.size();
+                if (!recv_wait_timer_.is_start())
+                    recv_wait_timer_.start_once(_now);
                 return 0;
             }
+
+            auto diff = mmint_t(calc_len) - recv_curr_cache_.size();
+            recv_curr_cache_.append(_buf.data(), diff);
+
+            err = chksum_succ_cb_(
+                memepp::buffer_view{ recv_curr_cache_.data(), mmint_t(calc_len) }, userdata_);
+            if (err) {
+                *_offset = diff;
+                return err;
+            }
+                
+            recv_cb_(recv_curr_cache_, this, userdata_);
+            recv_curr_cache_.clear();
+            *_offset = diff;
+            if (recv_wait_timer_.is_start())
+                recv_wait_timer_.cancel();
+            return 0;
         }
         return 0;
     }
