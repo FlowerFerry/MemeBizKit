@@ -35,8 +35,9 @@ namespace chrono {
 			isOnce_(false),
 			interval_(0),
 			count_(0),
-			cb_(nullptr),
-			userdata_(nullptr)
+			lastTs_(0),
+			userdata_(nullptr),
+			cb_(nullptr)
 		{}
 
 		passive_timer(const std::weak_ptr<ticker>& _ticker) noexcept :
@@ -45,8 +46,9 @@ namespace chrono {
 			isOnce_(false),
 			interval_(0),
 			count_(0),
-			cb_(nullptr),
-			userdata_(nullptr)
+			lastTs_(0),
+			userdata_(nullptr),
+			cb_(nullptr)
 		{}
 
 		virtual ~passive_timer();
