@@ -110,6 +110,8 @@ private:
     sqlite3_hdl(::sqlite3* _hdl) noexcept 
         : hdl_(_hdl) 
         , on_close_(nullptr)
+        , on_preclose_(nullptr)
+        , userdata_(nullptr)
     {}
 
     template <typename _Fn>
