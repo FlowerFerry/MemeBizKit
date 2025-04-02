@@ -326,7 +326,7 @@ protected:
     
     std::atomic_bool auto_reconn_hdl_running_ = false;
     std::atomic_bool wait_conn_restored_ = false;
-    connect_status   connect_status_;
+    connect_status   connect_status_ = connect_status::disconnected;
 
     message_arrived_callback message_arrived_cb_;
     delivery_complete_callback delivery_complete_cb_;

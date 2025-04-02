@@ -30,6 +30,10 @@ namespace mmbkpp {
 namespace wrap {
 namespace wspp {
 
+//! TODO:
+//! 1. websocket部分没处理
+//! 2. 更换std::regex
+//! 3. 当多线程run时，是线程不安全的
 template <typename Config>
 class routable_server 
 {
@@ -383,6 +387,7 @@ inline void routable_server<Config>::__on_open(const websocketpp::connection_hdl
             // TO_DO
         });
         auto wscp = std::make_shared<ws_conn_parameter>();
+        wscp->parent = this;
         wscp->hdl = _hdl;
         wscp->ping_timer = ping_timer;
         std::unique_lock<std::mutex> locker(mutex_);
