@@ -219,7 +219,7 @@ inline mgpp::err routable_server<Config>::start()
 #if !MMBKPP_OPT__IPV6_ENABLED
         server_.listen(websocketpp::lib::asio::ip::tcp::v4(), uint16_t(port_));
 #else
-    if (mmsw_util__can_bind_ipv6(uint16_t(port_)))
+    if (mmsw_util__can_bind_ipv6(uint16_t(port_), IPPROTO_TCP))
         server_.listen(uint16_t(port_));
     else
         server_.listen(websocketpp::lib::asio::ip::tcp::v4(), uint16_t(port_));
