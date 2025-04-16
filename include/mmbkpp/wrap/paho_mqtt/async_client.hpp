@@ -326,7 +326,7 @@ protected:
     
     std::atomic_bool auto_reconn_hdl_running_ = false;
     std::atomic_bool wait_conn_restored_ = false;
-    connect_status   connect_status_ = connect_status::disconnected;
+    connect_status   connect_status_;
 
     message_arrived_callback message_arrived_cb_;
     delivery_complete_callback delivery_complete_cb_;
@@ -376,7 +376,8 @@ uvbasic_client::uvbasic_client(const create_native_options& _opts)
     , disconn_opts_(_opts.raw().MQTTVersion)
 {
     sizeof(*this);
-    
+    connect_status_.value = connect_status::disconnected;
+
     handle_counter_.set_callback(nullmtx_, [this](auto&)
     {
         on_destroy();
