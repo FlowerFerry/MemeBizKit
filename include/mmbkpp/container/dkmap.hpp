@@ -2,6 +2,7 @@
 #ifndef MMBKPP_CONTAINER_DKMAP_HPP_INCLUDED
 #define MMBKPP_CONTAINER_DKMAP_HPP_INCLUDED
 
+#include <megopp/util/scope_cleanup.h>
 #include <memepp/string.hpp>
 #include <memepp/hash/std/hash.hpp>
 
@@ -100,16 +101,20 @@ namespace container {
         {
             auto it = maps_.find(_Keyval);
             if (it != maps_.end()) {
-                fkms_[_Keyval.fkey].erase(_Keyval);
+                fkms_[_Keyval.first].erase(_Keyval);
                 return maps_.erase(it);
             }
+            return it;
         }
 
         inline iterator insert(const key_type& _Keyval, const _Value& _Val) noexcept
         {
             auto it = maps_.insert({ _Keyval, _Val });
             if (it.second) {
+                auto cleanup = megopp::util::scope_cleanup__create(
+                    [&] { maps_.erase(it.first); });
                 fkms_[_Keyval.first].insert(_Keyval); 
+                cleanup.cancel();
             }
             return it.first;
         }
@@ -118,8 +123,12 @@ namespace container {
         {
             key_type keyval = { _Keyval1, _Keyval2 };
             auto it = maps_.insert({ keyval, _Val });
-            if (it.second)
+            if (it.second) {
+                auto cleanup = megopp::util::scope_cleanup__create(
+                    [&] { maps_.erase(it.first); });
                 fkms_[_Keyval1].insert(keyval);
+                cleanup.cancel();
+            }
             return it.first;
         }
 

@@ -108,7 +108,7 @@ namespace container {
         struct Eraser {
             template<typename TMapTuple, typename TKey, typename... TKeys>
             static void erase(TMapTuple& _maps, const std::tuple<TKey, TKeys...>& _key) {
-                if (_Index != _IgnoreIndex) {
+                if constexpr (_Index != _IgnoreIndex) {
                     std::get<_Index>(_maps).erase(std::get<_Index>(_key));
                 }
                 Eraser<_IgnoreIndex, _Index - 1>::erase(_maps, _key);
@@ -119,7 +119,7 @@ namespace container {
         struct Eraser<_IgnoreIndex, 0> {
             template<typename TMapTuple, typename TKey, typename... TKeys>
             static void erase(TMapTuple& _maps, const std::tuple<TKey, TKeys...>& _key) {
-                if (0 != _IgnoreIndex) {
+                if constexpr (0 != _IgnoreIndex) {
                     std::get<0>(_maps).erase(std::get<0>(_key));
                 }
             }
@@ -130,11 +130,17 @@ namespace container {
             template<typename TMapTuple, typename TValue, typename TKey, typename... TKeys>
             static bool insert(TMapTuple& _maps, const std::tuple<TKey, TKeys...>& _key, const TValue& _value)
             {
-                if (std::get<_Index>(_maps).insert(std::make_pair(_key, _value)).second == false) {
+                try {
+                    if (std::get<_Index>(_maps).insert(std::make_pair(_key, _value)).second == false) {
+                        Eraser<_Index, sizeof...(TKeys)>::erase(_maps, _key);
+                        return false;
+                    }
+
+                    return Inserter<_Index - 1>::insert(_maps, _key, _value);
+                } catch (...) {
                     Eraser<_Index, sizeof...(TKeys)>::erase(_maps, _key);
-                    return false;
+                    throw;
                 }
-                return Inserter<_Index - 1>::insert(_maps, _key, _value);
             }
         };
 
@@ -143,9 +149,14 @@ namespace container {
             template<typename TMapTuple, typename _TValue, typename TKey, typename... TKeys>
             static bool insert(TMapTuple& _maps, const std::tuple<TKey, TKeys...>& _key, const _TValue& _value)
             {
-                if (std::get<0>(_maps).insert(std::make_pair(_key, _value)).second == false) {
+                try {
+                    if (std::get<0>(_maps).insert(std::make_pair(_key, _value)).second == false) {
+                        Eraser<0, sizeof...(TKeys)>::erase(_maps, _key);
+                        return false;
+                    }
+                } catch (...) {
                     Eraser<0, sizeof...(TKeys)>::erase(_maps, _key);
-                    return false;
+                    throw;
                 }
                 return true;
             }
