@@ -1,6 +1,6 @@
 
-#ifndef MMBKPP_CONTAINER_DKMAP_HPP_INCLUDED
-#define MMBKPP_CONTAINER_DKMAP_HPP_INCLUDED
+#ifndef MMBKPP_CONTAINER_DKHMAP_HPP_INCLUDED
+#define MMBKPP_CONTAINER_DKHMAP_HPP_INCLUDED
 
 #include <megopp/util/scope_cleanup.h>
 #include <memepp/string.hpp>
@@ -32,7 +32,7 @@ namespace container {
         typename _MAlloc = std::allocator<std::pair<const std::pair<_FKty, _SKty>, _Value>>,
         typename _FAlloc = std::allocator<std::pair<const _FKty, std::unordered_set<std::pair<_FKty, _SKty>>>>
     >
-    class dkmap 
+    class dkhmap 
     {
     public:
         using key_type = std::pair<_FKty, _SKty>;
@@ -140,4 +140,4 @@ namespace container {
 }
 }
 
-#endif // !MMBKPP_CONTAINER_DKMAP_HPP_INCLUDED
+#endif // !MMBKPP_CONTAINER_DKHMAP_HPP_INCLUDED
