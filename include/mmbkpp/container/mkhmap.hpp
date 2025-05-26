@@ -154,6 +154,25 @@ namespace container {
         };
 
         template<size_t _Index>
+        struct clearer {
+            template<typename _TMapTuple>
+            static void clear(_TMapTuple& _maps) noexcept
+            {
+                clearer<_Index - 1>::clear(_maps);
+                std::get<_Index>(_maps).clear();
+            }
+        };
+
+        template<>
+        struct clearer<0> {
+            template<typename _TMapTuple>
+            static void clear(_TMapTuple& _maps) noexcept
+            {
+                std::get<0>(_maps).clear();
+            }
+        };
+
+        template<size_t _Index>
         struct inserter {
             template<typename _TMapTuple, typename _TValue, typename _TKey, typename... _TKeys>
             static bool insert(_TMapTuple& _maps, const std::tuple<_TKey, _TKeys...>& _key, const _TValue& _value)
@@ -376,14 +395,7 @@ namespace container {
         template<size_t _Index>
         inline void clear_impl() noexcept
         {
-            clear_impl<_Index - 1>();
-            std::get<_Index>(maps_).clear();
-        }
-
-        template<>
-        inline void clear_impl<0>() noexcept
-        {
-            std::get<0>(maps_).clear();
+            mk_details::clearer<_Index>::clear(maps_);
         }
 
         template<size_t _Index>
