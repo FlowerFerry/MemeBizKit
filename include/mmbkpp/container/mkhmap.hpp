@@ -1,4 +1,4 @@
-
+﻿
 #ifndef MMBKPP_CONTAINER_MKHMAP_HPP_INCLUDED
 #define MMBKPP_CONTAINER_MKHMAP_HPP_INCLUDED
 
@@ -9,116 +9,144 @@ namespace mmbkpp {
 namespace container {
 
     template<size_t _Index, typename _Ty, typename... _Ts>
-    struct mkmain
+    struct mk_nth_helper
     {
-        using type = typename mkmain<_Index - 1, _Ts...>::type;
+        using type = typename mk_nth_helper<_Index - 1, _Ts...>::type;
     };
 
     template<typename _Ty, typename... _Ts>
-    struct mkmain<0, _Ty, _Ts...>
+    struct mk_nth_helper<0, _Ty, _Ts...>
     {
         using type = _Ty;
     };
 
-    template<typename _TValue, typename _TKey, typename... _TKeys>
-    struct mkhmap;
-    template<size_t _Index, typename _Ty, typename... _Ts>
-    struct mk
+    template<typename _TKey, typename _THash = std::hash<_TKey>, typename _TEqual = std::equal_to<_TKey>>
+    struct mkhmap_layer
     {
-        mk() {}
+        using key_type = _TKey;
+        using hash_type = _THash;
+        using equal_type = _TEqual;
+    };
+
+    template<typename _TLayer, typename... _TLayers>
+    using mk_tuple = std::tuple<typename _TLayer::key_type, typename _TLayers::key_type...>;
+
+    template<size_t _Index, typename _TLayer, typename... _TLayers>
+    struct mk_wrap
+    {
+        mk_wrap() {}
         // TO_DO
-        mk(const typename mkmain<_Index, _Ty, _Ts...>::type& _key)
+        mk_wrap(const typename mk_nth_helper<_Index, _TLayer, _TLayers...>::type::key_type& _key)
         {
             std::get<_Index>(tuple_) = _key;
         }
-        mk(const std::tuple<_Ty, _Ts...>& _tuple)
+        mk_wrap(const mk_tuple<_TLayer, _TLayers...>& _tuple)
             : tuple_(_tuple)
         {
         }
-        mk(const mk&) = default;
-        mk(mk&&) = default;
+        mk_wrap(const mk_wrap&) = default;
+        mk_wrap(mk_wrap&&) = default;
         
-        inline bool operator==(const mk& _key) const noexcept
+        inline bool operator==(const mk_wrap& _key) const noexcept
         {
             return std::get<_Index>(tuple_) == std::get<_Index>(_key.tuple_);
         }
 
-        inline const typename mkmain<_Index, _Ty, _Ts...>::type& key() const noexcept
+        inline const typename mk_nth_helper<_Index, _TLayer, _TLayers...>::type::key_type& key() const noexcept
         {
             return std::get<_Index>(tuple_);
         }
 
         template<size_t _CurrIndex>
-        inline const typename mkmain<_CurrIndex, _Ty, _Ts...>::type& key() const noexcept
+        inline const typename mk_nth_helper<_CurrIndex, _TLayer, _TLayers...>::type::key_type& key() const noexcept
         {
             return std::get<_CurrIndex>(tuple_);
         }
 
-        inline const std::tuple<_Ty, _Ts...>& tuple() const noexcept
+        inline const mk_tuple<_TLayer, _TLayers...>& tuple() const noexcept
         {
             return tuple_;
         }
         
-        std::tuple<_Ty, _Ts...> tuple_;
+        mk_tuple<_TLayer, _TLayers...> tuple_;
     };
 
-    template<size_t _Index, typename... _Ty>
-    struct mkhash
+    template<size_t _Index, typename... _TLayers>
+    struct mk_hash
     {
-        inline std::size_t operator()(const mk<_Index, _Ty...>& _k) const
+        inline std::size_t operator()(const mk_wrap<_Index, _TLayers...>& _k) const
         {
-            return std::hash<typename mkmain<_Index, _Ty...>::type>()(_k.key());
+            return typename mk_nth_helper<_Index, _TLayers...>::type::hash_type()(_k.key());
         }
     };
 
-    template<typename _TValue, size_t _Index, typename _TKey, typename... _TKeys>
-    struct mkhmap_member
+    template<size_t _Index, typename... _TLayers>
+    struct mk_equal
     {
-        using map_type = std::unordered_map<mk<_Index, _TKey, _TKeys...>, _TValue, mkhash<_Index, _TKey, _TKeys...>>;
-        using type = decltype(std::tuple_cat(std::declval<typename mkhmap_member<_TValue, _Index - 1, _TKey, _TKeys...>::type>(), std::tuple<map_type>()));
+        inline bool operator()(const mk_wrap<_Index, _TLayers...>& _k1, const mk_wrap<_Index, _TLayers...>& _k2) const
+        {
+            return typename mk_nth_helper<_Index, _TLayers...>::type::equal_type()(_k1.key(), _k2.key());
+        }
     };
 
-    template<typename _TValue, typename _TKey, typename... _TKeys>
-    struct mkhmap_member<_TValue, 0, _TKey, _TKeys...>
+    template<template<typename...> typename _THashMap, typename _TValue, size_t _Index, typename _TLayer, typename... _TLayers>
+    struct mk_map_tuple
     {
-        using map_type = std::unordered_map<mk<0, _TKey, _TKeys...>, _TValue, mkhash<0, _TKey, _TKeys...>>;
+        using map_type = _THashMap<
+            mk_wrap<_Index, _TLayer, _TLayers...>, 
+            _TValue, 
+            mk_hash<_Index, _TLayer, _TLayers...>,
+            mk_equal<_Index, _TLayer, _TLayers...>
+        >;
+        using type = decltype(std::tuple_cat(std::declval<typename mk_map_tuple<_THashMap, _TValue, _Index - 1, _TLayer, _TLayers...>::type>(), std::tuple<map_type>()));
+    };
+
+    template<template<typename...> typename _THashMap, typename _TValue, typename _TLayer, typename... _TLayers>
+    struct mk_map_tuple<_THashMap, _TValue, 0, _TLayer, _TLayers...>
+    {
+        using map_type = _THashMap<
+            mk_wrap<0, _TLayer, _TLayers...>, 
+            _TValue,
+            mk_hash<0, _TLayer, _TLayers...>,
+            mk_equal<0, _TLayer, _TLayers...>
+        >;
         using type = std::tuple<map_type>;
     };
 
-    namespace details {
+    namespace mk_details {
 
         template<size_t _Index>
-        struct ExistEacher {
-            template<typename TMapTuple, typename... TKeys>
-            static bool exist(const TMapTuple& _maps, const std::tuple<TKeys...>& _key) {
+        struct exist_eacher {
+            template<typename _TMapTuple, typename... _TKeys>
+            static bool exist(const _TMapTuple& _maps, const std::tuple<_TKeys...>& _key) {
                 return std::get<_Index>(_maps).find(std::get<_Index>(_key)) != std::get<_Index>(_maps).end()
-                    || ExistEacher<_Index - 1>::exist(_maps, _key);
+                    || exist_eacher<_Index - 1>::exist(_maps, _key);
             }
         };
 
         template<>
-        struct ExistEacher<0> {
-            template<typename TMapTuple, typename... TKeys>
-            static bool exist(const TMapTuple& _maps, const std::tuple<TKeys...>& _key) {
+        struct exist_eacher<0> {
+            template<typename _TMapTuple, typename... _TKeys>
+            static bool exist(const _TMapTuple& _maps, const std::tuple<_TKeys...>& _key) {
                 return std::get<0>(_maps).find(std::get<0>(_key)) != std::get<0>(_maps).end();
             }
         };
 
         template<size_t _IgnoreIndex, size_t _Index>
-        struct Eraser {
-            template<typename TMapTuple, typename TKey, typename... TKeys>
-            static void erase(TMapTuple& _maps, const std::tuple<TKey, TKeys...>& _key) {
+        struct eraser {
+            template<typename _TMapTuple, typename _TKey, typename... _TKeys>
+            static void erase(_TMapTuple& _maps, const std::tuple<_TKey, _TKeys...>& _key) {
                 if constexpr (_Index != _IgnoreIndex) {
                     std::get<_Index>(_maps).erase(std::get<_Index>(_key));
                 }
-                Eraser<_IgnoreIndex, _Index - 1>::erase(_maps, _key);
+                eraser<_IgnoreIndex, _Index - 1>::erase(_maps, _key);
             }
         };
 
         template<size_t _IgnoreIndex>
-        struct Eraser<_IgnoreIndex, 0> {
-            template<typename TMapTuple, typename TKey, typename... TKeys>
-            static void erase(TMapTuple& _maps, const std::tuple<TKey, TKeys...>& _key) {
+        struct eraser<_IgnoreIndex, 0> {
+            template<typename _TMapTuple, typename _TKey, typename... _TKeys>
+            static void erase(_TMapTuple& _maps, const std::tuple<_TKey, _TKeys...>& _key) {
                 if constexpr (0 != _IgnoreIndex) {
                     std::get<0>(_maps).erase(std::get<0>(_key));
                 }
@@ -126,36 +154,36 @@ namespace container {
         };
 
         template<size_t _Index>
-        struct Inserter {
-            template<typename TMapTuple, typename TValue, typename TKey, typename... TKeys>
-            static bool insert(TMapTuple& _maps, const std::tuple<TKey, TKeys...>& _key, const TValue& _value)
+        struct inserter {
+            template<typename _TMapTuple, typename _TValue, typename _TKey, typename... _TKeys>
+            static bool insert(_TMapTuple& _maps, const std::tuple<_TKey, _TKeys...>& _key, const _TValue& _value)
             {
                 try {
                     if (std::get<_Index>(_maps).insert(std::make_pair(_key, _value)).second == false) {
-                        Eraser<_Index, sizeof...(TKeys)>::erase(_maps, _key);
+                        eraser<_Index, sizeof...(_TKeys)>::erase(_maps, _key);
                         return false;
                     }
 
-                    return Inserter<_Index - 1>::insert(_maps, _key, _value);
+                    return inserter<_Index - 1>::insert(_maps, _key, _value);
                 } catch (...) {
-                    Eraser<_Index, sizeof...(TKeys)>::erase(_maps, _key);
+                    eraser<_Index, sizeof...(_TKeys)>::erase(_maps, _key);
                     throw;
                 }
             }
         };
 
         template<>
-        struct Inserter<0> {
-            template<typename TMapTuple, typename _TValue, typename TKey, typename... TKeys>
-            static bool insert(TMapTuple& _maps, const std::tuple<TKey, TKeys...>& _key, const _TValue& _value)
+        struct inserter<0> {
+            template<typename _TMapTuple, typename _TValue, typename _TKey, typename... _TKeys>
+            static bool insert(_TMapTuple& _maps, const std::tuple<_TKey, _TKeys...>& _key, const _TValue& _value)
             {
                 try {
                     if (std::get<0>(_maps).insert(std::make_pair(_key, _value)).second == false) {
-                        Eraser<0, sizeof...(TKeys)>::erase(_maps, _key);
+                        eraser<0, sizeof...(_TKeys)>::erase(_maps, _key);
                         return false;
                     }
                 } catch (...) {
-                    Eraser<0, sizeof...(TKeys)>::erase(_maps, _key);
+                    eraser<0, sizeof...(_TKeys)>::erase(_maps, _key);
                     throw;
                 }
                 return true;
@@ -164,13 +192,14 @@ namespace container {
 
     };
     
-    template<typename _TValue, typename _TKey, typename... _TKeys>
-    struct mkhmap
+    //! 这个类实现了一个支持多个主键的哈希表，每个主键都能 O(1) 查找同一份数据，适合需要多重唯一索引的场景。
+    template<template<typename...> typename _THashMap, typename _TValue, typename _TLayer, typename... _TLayers>
+    struct mk_layered_hmap
     {
-        using map_tuple_t = typename mkhmap_member<_TValue, sizeof...(_TKeys), _TKey, _TKeys...>::type;
+        using map_tuple_type = typename mk_map_tuple<_THashMap, _TValue, sizeof...(_TLayers), _TLayer, _TLayers...>::type;
         
-        using iterator = typename mkhmap_member<_TValue, 0, _TKey, _TKeys...>::map_type::iterator;
-        using const_iterator = typename mkhmap_member<_TValue, 0, _TKey, _TKeys...>::map_type::const_iterator;
+        using iterator = typename mk_map_tuple<_THashMap, _TValue, 0, _TLayer, _TLayers...>::map_type::iterator;
+        using const_iterator = typename mk_map_tuple<_THashMap, _TValue, 0, _TLayer, _TLayers...>::map_type::const_iterator;
 
         inline bool empty() const noexcept
         {
@@ -183,170 +212,191 @@ namespace container {
         }
 
         template<size_t _Index>
-        inline typename mkhmap_member<_TValue, _Index, _TKey, _TKeys...>::map_type::iterator
-            find(const typename mkmain<_Index, _TKey, _TKeys...>::type& _key)
+        inline typename mk_map_tuple<_THashMap, _TValue, _Index, _TLayer, _TLayers...>::map_type::iterator
+            find(const typename mk_nth_helper<_Index, _TLayer, _TLayers...>::type::key_type& _key)
         {
             return std::get<_Index>(maps_).find(_key);
         }
 
         template<size_t _Index>
-        inline typename mkhmap_member<_TValue, _Index, _TKey, _TKeys...>::map_type::const_iterator
-            find(const typename mkmain<_Index, _TKey, _TKeys...>::type& _key) const
+        inline typename mk_map_tuple<_THashMap, _TValue, _Index, _TLayer, _TLayers...>::map_type::const_iterator
+            find(const typename mk_nth_helper<_Index, _TLayer, _TLayers...>::type::key_type& _key) const
         {
             return std::get<_Index>(maps_).find(_key);
         }
         
-        inline typename mkhmap_member<_TValue, 0, _TKey, _TKeys...>::map_type::iterator
-            find(const typename mkmain<0, _TKey, _TKeys...>::type& _key)
+        inline typename mk_map_tuple<_THashMap, _TValue, 0, _TLayer, _TLayers...>::map_type::iterator
+            find(const typename mk_nth_helper<0, _TLayer, _TLayers...>::type::key_type& _key)
         {
             return std::get<0>(maps_).find(_key);
         }
         
-        inline typename mkhmap_member<_TValue, 0, _TKey, _TKeys...>::map_type::const_iterator
-            find(const typename mkmain<0, _TKey, _TKeys...>::type& _key) const
+        inline typename mk_map_tuple<_THashMap, _TValue, 0, _TLayer, _TLayers...>::map_type::const_iterator
+            find(const typename mk_nth_helper<0, _TLayer, _TLayers...>::type::key_type& _key) const
         {
             return std::get<0>(maps_).find(_key);
         }
 
         template<size_t _Index>
-        inline typename mkhmap_member<_TValue, _Index, _TKey, _TKeys...>::map_type::iterator
+        inline typename mk_map_tuple<_THashMap, _TValue, _Index, _TLayer, _TLayers...>::map_type::iterator
             end()
         {
             return std::get<_Index>(maps_).end();
         }
 
         template<size_t _Index>
-        inline typename mkhmap_member<_TValue, _Index, _TKey, _TKeys...>::map_type::const_iterator
+        inline typename mk_map_tuple<_THashMap, _TValue, _Index, _TLayer, _TLayers...>::map_type::const_iterator
             end() const
         {
             return std::get<_Index>(maps_).end();
         }
 
-        inline typename mkhmap_member<_TValue, 0, _TKey, _TKeys...>::map_type::iterator
+        inline typename mk_map_tuple<_THashMap, _TValue, 0, _TLayer, _TLayers...>::map_type::iterator
             end()
         {
             return std::get<0>(maps_).end();
         }
 
-        inline typename mkhmap_member<_TValue, 0, _TKey, _TKeys...>::map_type::const_iterator
+        inline typename mk_map_tuple<_THashMap, _TValue, 0, _TLayer, _TLayers...>::map_type::const_iterator
             end() const
         {
             return std::get<0>(maps_).end();
         }
         
         template<size_t _Index>
-        inline typename mkhmap_member<_TValue, _Index, _TKey, _TKeys...>::map_type::iterator
+        inline typename mk_map_tuple<_THashMap, _TValue, _Index, _TLayer, _TLayers...>::map_type::iterator
             begin()
         {
             return std::get<_Index>(maps_).begin();
         }
 
         template<size_t _Index>
-        inline typename mkhmap_member<_TValue, _Index, _TKey, _TKeys...>::map_type::const_iterator
+        inline typename mk_map_tuple<_THashMap, _TValue, _Index, _TLayer, _TLayers...>::map_type::const_iterator
             begin() const
         {
             return std::get<_Index>(maps_).begin();
         }
         
-        inline typename mkhmap_member<_TValue, 0, _TKey, _TKeys...>::map_type::iterator
+        inline typename mk_map_tuple<_THashMap, _TValue, 0, _TLayer, _TLayers...>::map_type::iterator
             begin()
         {
             return std::get<0>(maps_).begin();
         }
         
-        inline typename mkhmap_member<_TValue, 0, _TKey, _TKeys...>::map_type::const_iterator
+        inline typename mk_map_tuple<_THashMap, _TValue, 0, _TLayer, _TLayers...>::map_type::const_iterator
             begin() const
         {
             return std::get<0>(maps_).begin();
         }
         
         template<size_t _Index>
-        inline typename mkhmap_member<_TValue, _Index, _TKey, _TKeys...>::map_type::iterator
-            erase(typename mkhmap_member<_TValue, _Index, _TKey, _TKeys...>::map_type::iterator _it)
+        inline typename mk_map_tuple<_THashMap, _TValue, _Index, _TLayer, _TLayers...>::map_type::iterator
+            erase(typename mk_map_tuple<_THashMap, _TValue, _Index, _TLayer, _TLayers...>::map_type::iterator _it)
         {
             if (_it == std::get<_Index>(maps_).end())
                 return _it;
-            erase_impl<_Index, sizeof...(_TKeys)>(_it->first.tuple());
+            erase_impl<_Index, sizeof...(_TLayers)>(_it->first.tuple());
             return std::get<_Index>(maps_).erase(_it);
         }
 
         template<size_t _Index>
-        inline typename mkhmap_member<_TValue, _Index, _TKey, _TKeys...>::map_type::iterator
-            erase(typename mkhmap_member<_TValue, _Index, _TKey, _TKeys...>::map_type::const_iterator _it)
+        inline typename mk_map_tuple<_THashMap, _TValue, _Index, _TLayer, _TLayers...>::map_type::iterator
+            erase(typename mk_map_tuple<_THashMap, _TValue, _Index, _TLayer, _TLayers...>::map_type::const_iterator _it)
         {
             if (_it == std::get<_Index>(maps_).end())
                 return _it;
-            erase_impl<_Index, sizeof...(_TKeys)>(_it->first.tuple());
+            erase_impl<_Index, sizeof...(_TLayers)>(_it->first.tuple());
             return std::get<_Index>(maps_).erase(_it);
         }
 
-        inline typename mkhmap_member<_TValue, 0, _TKey, _TKeys...>::map_type::iterator
-            erase(typename mkhmap_member<_TValue, 0, _TKey, _TKeys...>::map_type::iterator _it)
+        inline typename mk_map_tuple<_THashMap, _TValue, 0, _TLayer, _TLayers...>::map_type::iterator
+            erase(typename mk_map_tuple<_THashMap, _TValue, 0, _TLayer, _TLayers...>::map_type::iterator _it)
         {
             if (_it == std::get<0>(maps_).end())
                 return _it;
-            erase_impl<0, sizeof...(_TKeys)>(_it->first.tuple());
+            erase_impl<0, sizeof...(_TLayers)>(_it->first.tuple());
             return std::get<0>(maps_).erase(_it);
         }
 
-        inline typename mkhmap_member<_TValue, 0, _TKey, _TKeys...>::map_type::iterator
-            erase(typename mkhmap_member<_TValue, 0, _TKey, _TKeys...>::map_type::const_iterator _it)
+        inline typename mk_map_tuple<_THashMap, _TValue, 0, _TLayer, _TLayers...>::map_type::iterator
+            erase(typename mk_map_tuple<_THashMap, _TValue, 0, _TLayer, _TLayers...>::map_type::const_iterator _it)
         {
             if (_it == std::get<0>(maps_).end())
                 return _it;
-            erase_impl<0, sizeof...(_TKeys)>(_it->first.tuple());
+            erase_impl<0, sizeof...(_TLayers)>(_it->first.tuple());
             return std::get<0>(maps_).erase(_it);
         }
 
         template<size_t _Index>
         inline size_t
-            erase(const typename mkmain<_Index, _TKey, _TKeys...>::type& _key)
+            erase(const typename mk_nth_helper<_Index, _TLayer, _TLayers...>::type::key_type& _key)
         {
             auto it = std::get<_Index>(maps_).find(_key);
             if (it == std::get<_Index>(maps_).end())
                 return 0;
-            erase_impl<_Index, sizeof...(_TKeys)>(it->first.tuple());
+            erase_impl<_Index, sizeof...(_TLayers)>(it->first.tuple());
             return std::get<_Index>(maps_).erase(_key);
         }
         
-        inline size_t erase(const typename mkmain<0, _TKey, _TKeys...>::type& _key)
+        inline size_t erase(const typename mk_nth_helper<0, _TLayer, _TLayers...>::type::key_type& _key)
         {
             auto it = std::get<0>(maps_).find(_key);
             if (it == std::get<0>(maps_).end())
                 return 0;
-            erase_impl<0, sizeof...(_TKeys)>(it->first.tuple());
+            erase_impl<0, sizeof...(_TLayers)>(it->first.tuple());
             return std::get<0>(maps_).erase(_key);
         }
 
-        inline bool insert(const std::tuple<_TKey, _TKeys...>& _key, const _TValue& _value)
+        inline void clear() noexcept
         {
-            if (exist_each_impl<sizeof...(_TKeys)>(_key))
+            clear_impl<sizeof...(_TLayers)>();
+        }
+
+        inline bool insert(const mk_tuple<_TLayer, _TLayers...>& _key, const _TValue& _value)
+        {
+            if (exist_each_impl<sizeof...(_TLayers)>(_key))
                 return false;
-            return  insert_impl<sizeof...(_TKeys)>(_key, _value);
+            return  insert_impl<sizeof...(_TLayers)>(_key, _value);
         }
         
     protected:
 
         template<size_t _Index>
-        inline bool insert_impl(const std::tuple<_TKey, _TKeys...>& _key, const _TValue& _value)
+        inline bool insert_impl(const mk_tuple<_TLayer, _TLayers...>& _key, const _TValue& _value)
         {
-            return details::Inserter<_Index>::insert(maps_, _key, _value);
+            return mk_details::inserter<_Index>::insert(maps_, _key, _value);
         }
         
         template<size_t _IgnoreIndex, size_t _Index>
-        inline void erase_impl(const std::tuple<_TKey, _TKeys...>& _key)
+        inline void erase_impl(const mk_tuple<_TLayer, _TLayers...>& _key)
         {
-            details::Eraser<_IgnoreIndex, _Index>::erase(maps_, _key);
+            mk_details::eraser<_IgnoreIndex, _Index>::erase(maps_, _key);
         }
-        
+
         template<size_t _Index>
-        inline bool exist_each_impl(const std::tuple<_TKey, _TKeys...>& _key)
+        inline void clear_impl() noexcept
         {
-            return details::ExistEacher<_Index>::exist(maps_, _key);
+            clear_impl<_Index - 1>();
+            std::get<_Index>(maps_).clear();
+        }
+
+        template<>
+        inline void clear_impl<0>() noexcept
+        {
+            std::get<0>(maps_).clear();
+        }
+
+        template<size_t _Index>
+        inline bool exist_each_impl(const mk_tuple<_TLayer, _TLayers...>& _key)
+        {
+            return mk_details::exist_eacher<_Index>::exist(maps_, _key);
         }
         
-        map_tuple_t maps_;
+        map_tuple_type maps_;
     };
+
+    template<typename _TValue, typename _TKey, typename... _TKeys>
+    using mkhmap = mk_layered_hmap<std::unordered_map, _TValue, mkhmap_layer<_TKey>, mkhmap_layer<_TKeys>...>;
 }    
 };
 

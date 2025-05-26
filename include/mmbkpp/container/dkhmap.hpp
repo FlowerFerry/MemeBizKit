@@ -1,4 +1,4 @@
-
+﻿
 #ifndef MMBKPP_CONTAINER_DKHMAP_HPP_INCLUDED
 #define MMBKPP_CONTAINER_DKHMAP_HPP_INCLUDED
 
@@ -23,6 +23,8 @@ namespace std {
 namespace mmbkpp {
 namespace container {
 
+    //! 这个类可以看作是一个“二级树形结构”，也就是常说的“嵌套 map”或“二级哈希表”结构，
+    //! 只不过用 pair 作为主键，辅以 first-key 到所有 pair 的辅助索引。
     template<
         typename _FKty, 
         typename _SKty, 
