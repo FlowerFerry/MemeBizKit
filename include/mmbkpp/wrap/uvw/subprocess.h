@@ -368,6 +368,7 @@ private:
             __create_in_pipe();
         }
         if (stdout_cb_) {
+            __create_in_pipe ();
             __create_out_pipe();
         }
         if (stderr_cb_) {
@@ -394,7 +395,8 @@ private:
         proc_->flags(flags_);
         proc_->uid(uid_);
         proc_->gid(gid_);
-        proc_->disable_stdio_inheritance();
+        if (disable_stdio_inheritance_)
+            proc_->disable_stdio_inheritance();
 
         if (in_pipe_) {
             proc_->stdio(*in_pipe_, 
