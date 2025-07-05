@@ -608,7 +608,7 @@ private:
     exit_callback  exit_cb_;
     close_callback close_cb_;    
     std::string cwd_;
-    state state_ = state::STOPPED;
+    enum class state state_ = state::STOPPED;
     ::uvw::process_handle::process_flags flags_ = ::uvw::process_handle::process_flags::_UVW_ENUM;
     std::optional<::uvw::exit_event> exit_event_;
     ::uvw::uid_type uid_ = {0};
