@@ -26,42 +26,6 @@ public:
     subprocess(::uvw::loop::token _token, std::shared_ptr<::uvw::loop> _ref)
         : loop_{ std::move(_ref) }
     {
-        // proc_hdl_->on<::uvw::error_event>([this](auto &_event, auto &_handle) {
-        //     if (error_cb_) {
-        //         error_cb_(_event, *this);
-        //     }
-        // });
-
-        // proc_hdl_->on<::uvw::exit_event>([this](auto &_event, auto &_handle) {
-        //     is_running_ = false;
-        //     if (out_pipe_) {
-        //         out_pipe_->stop();
-        //     }
-        //     if (err_pipe_) {
-        //         err_pipe_->stop();
-        //     }
-
-        //     if (exit_cb_) {
-        //         exit_cb_(_event, *this);
-        //     }
-        // });
-
-        // proc_hdl_->on<::uvw::close_event>([this](auto &_event, auto &_handle) {
-        //     proc_hdl_.reset();
-        //     if (!in_pipe_ && !out_pipe_ && !err_pipe_) 
-        //     {
-        //         // If all pipes are not set, reset the subprocess instance
-        //         // to allow it to be reused.
-        //         auto self_ptr = this->shared_from_this();
-        //         self_reset();
-        //         if (close_cb_) {
-        //             close_cb_(_event, *this);
-        //         }
-        //     } 
-        // });
-
-        // proc_hdl_->uid(::uvw::uid_type{0});
-        // proc_hdl_->gid(::uvw::gid_type{0});
     }
 
     ~subprocess()
@@ -118,113 +82,10 @@ public:
     {
         ready_write_stdin_ = true;
     }
-    // void ready_write_stdin()
-    // {
-    //     if (!in_pipe_) {
-    //         in_pipe_ = proc_hdl_->parent().resource<::uvw::pipe_handle>();
-    //         in_pipe_->on<::uvw::error_event>([this](auto &_event, auto &_handle) {
-    //             if (error_cb_) {
-    //                 error_cb_(_event, *this);
-    //             }
-    //         });
-
-    //         in_pipe_->on<::uvw::close_event>([this](auto &_event, auto &_handle) {
-    //             if (close_cb_) {
-    //                 close_cb_(_event, *this);
-    //             }
-                
-    //             in_pipe_.reset();
-    //             if (!out_pipe_ && !err_pipe_ && !proc_hdl_) 
-    //             {
-    //                 auto self_ptr = this->shared_from_this();
-    //                 self_reset();
-    //                 if (close_cb_) {
-    //                     close_cb_(_event, *this);
-    //                 }
-    //             }
-                
-    //         });
-
-    //         proc_hdl_->stdio(*in_pipe_, 
-    //             ::uvw::process_handle::stdio_flags::CREATE_PIPE | 
-    //             ::uvw::process_handle::stdio_flags::READABLE_PIPE);
-    //     }
-    // }
-
-    // void ready_read_stdout()
-    // {
-    //     if (!out_pipe_) {
-    //         out_pipe_ = proc_hdl_->parent().resource<::uvw::pipe_handle>();
-    //         out_pipe_->on<::uvw::data_event>([this](auto &_event, auto &_handle) {
-    //             if (stdout_cb_) {
-    //                 stdout_cb_(_event, *this);
-    //             }
-    //         });
-
-    //         out_pipe_->on<::uvw::error_event>([this](auto &_event, auto &_handle) {
-    //             if (error_cb_) {
-    //                 error_cb_(_event, *this);
-    //             }
-    //         });
-
-    //         out_pipe_->on<::uvw::close_event>([this](auto &_event, auto &_handle) {
-
-    //             out_pipe_.reset();
-    //             if (!in_pipe_ && !err_pipe_ && !proc_hdl_) 
-    //             {
-    //                 auto self_ptr = this->shared_from_this();
-    //                 self_reset();
-    //                 if (close_cb_) {
-    //                     close_cb_(_event, *this);
-    //                 }
-    //             }
-    //         });
-
-    //         proc_hdl_->stdio(*out_pipe_, 
-    //             ::uvw::process_handle::stdio_flags::CREATE_PIPE | 
-    //             ::uvw::process_handle::stdio_flags::WRITABLE_PIPE);
-    //     }
-    // }
 
     void ready_read_stderr(const data_callback& _cb)
     {
         stderr_cb_ = _cb;
-
-        // if (!err_pipe_) {
-            
-        //     err_pipe_ = proc_hdl_->parent().resource<::uvw::pipe_handle>();
-        //     err_pipe_->on<::uvw::data_event>([this](auto &_event, auto &_handle) {
-        //         if (stderr_cb_) {
-        //             stderr_cb_(_event, *this);
-        //             return;
-        //         }
-        //         if (stdout_cb_) {
-        //             stdout_cb_(_event, *this);
-        //         }
-        //     });
-
-        //     err_pipe_->on<::uvw::error_event>([this](auto &_event, auto &_handle) {
-        //         if (error_cb_) {
-        //             error_cb_(_event, *this);
-        //         }
-        //     });
-            
-        //     err_pipe_->on<::uvw::close_event>([this](auto &_event, auto &_handle) {
-        //         err_pipe_.reset();
-        //         if (!in_pipe_ && !out_pipe_ && !proc_hdl_) 
-        //         {
-        //             auto self_ptr = this->shared_from_this();
-        //             self_reset();
-        //             if (close_cb_) {
-        //                 close_cb_(_event, *this);
-        //             }
-        //         }
-        //     });
-
-        //     proc_hdl_->stdio(*err_pipe_, 
-        //         ::uvw::process_handle::stdio_flags::CREATE_PIPE | 
-        //         ::uvw::process_handle::stdio_flags::WRITABLE_PIPE);
-        // }
     }
 
     int kill(int _signum)
@@ -398,20 +259,6 @@ public:
             async_->close();
         }
 
-        // if (in_pipe_) {
-        //     in_pipe_->close();
-        // }
-        // if (out_pipe_) {
-        //     out_pipe_->stop();
-        //     out_pipe_->close();
-        // }
-        // if (err_pipe_) {
-        //     err_pipe_->stop();
-        //     err_pipe_->close();
-        // }
-        // if (proc_) {
-        //     proc_->close();
-        // }
     }
 
 private:
@@ -691,6 +538,7 @@ private:
             err_pipe_->stop();
             err_pipe_->close();
         }
+
     }
 
     void __on_close()
