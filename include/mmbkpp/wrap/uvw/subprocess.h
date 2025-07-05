@@ -38,16 +38,16 @@ public:
         });
 
         proc_hdl_->on<::uvw::close_event>([this](auto &_event, auto &_handle) {
-            if (close_cb_) {
-                close_cb_(_event, *this);
-            }
-
             proc_hdl_.reset();
             if (!in_pipe_ && !out_pipe_ && !err_pipe_) 
             {
                 // If all pipes are not set, reset the subprocess instance
                 // to allow it to be reused.
+                auto self_ptr = this->shared_from_this();
                 self_reset();
+                if (close_cb_) {
+                    close_cb_(_event, *this);
+                }
             } 
         });
 
@@ -60,7 +60,7 @@ public:
 
     int init()
     {
-        return proc_hdl_->init();
+        return leak_if(proc_hdl_->init());
     }
     
     int leak_if(int _err) noexcept {
@@ -116,7 +116,13 @@ public:
                 
                 in_pipe_.reset();
                 if (!out_pipe_ && !err_pipe_ && !proc_hdl_) 
+                {
+                    auto self_ptr = this->shared_from_this();
                     self_reset();
+                    if (close_cb_) {
+                        close_cb_(_event, *this);
+                    }
+                }
                 
             });
 
@@ -143,13 +149,16 @@ public:
             });
 
             out_pipe_->on<::uvw::close_event>([this](auto &_event, auto &_handle) {
-                if (close_cb_) {
-                    close_cb_(_event, *this);
-                }
-                
+
                 out_pipe_.reset();
                 if (!in_pipe_ && !err_pipe_ && !proc_hdl_) 
+                {
+                    auto self_ptr = this->shared_from_this();
                     self_reset();
+                    if (close_cb_) {
+                        close_cb_(_event, *this);
+                    }
+                }
             });
 
             proc_hdl_->stdio(*out_pipe_, 
@@ -182,13 +191,15 @@ public:
             });
             
             err_pipe_->on<::uvw::close_event>([this](auto &_event, auto &_handle) {
-                if (close_cb_) {
-                    close_cb_(_event, *this);
-                }
-                
                 err_pipe_.reset();
                 if (!in_pipe_ && !out_pipe_ && !proc_hdl_) 
+                {
+                    auto self_ptr = this->shared_from_this();
                     self_reset();
+                    if (close_cb_) {
+                        close_cb_(_event, *this);
+                    }
+                }
             });
 
             proc_hdl_->stdio(*err_pipe_, 
@@ -250,7 +261,7 @@ public:
         }
 
         is_running_ = true;
-        return leak_if(proc_hdl_->spawn(_file, _args, _envs));
+        return proc_hdl_->spawn(_file, _args, _envs);
     }
 
     int spawn(const std::string &_file, const std::vector<std::string> &_args = {}, const std::vector<std::string> &_envs = {})
