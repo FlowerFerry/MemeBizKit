@@ -199,6 +199,9 @@ public:
 
     int kill(int _signum)
     {
+        if (!is_running_) {
+            return UV_EALREADY;
+        }
         return proc_hdl_->kill(_signum);
     }
 
