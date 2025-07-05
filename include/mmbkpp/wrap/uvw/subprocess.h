@@ -32,6 +32,13 @@ public:
 
         proc_hdl_->on<::uvw::exit_event>([this](auto &_event, auto &_handle) {
             is_running_ = false;
+            if (out_pipe_) {
+                out_pipe_->stop();
+            }
+            if (err_pipe_) {
+                err_pipe_->stop();
+            }
+
             if (exit_cb_) {
                 exit_cb_(_event, *this);
             }
