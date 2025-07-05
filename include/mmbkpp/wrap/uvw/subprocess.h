@@ -23,6 +23,13 @@ public:
     using exit_callback  = std::function<void(::uvw::exit_event  &, subprocess &)>;
     using close_callback = std::function<void(::uvw::close_event &, subprocess &)>;
 
+    enum class state {
+        STOPPED,
+        STOPPING,
+        STARTING,
+        RUNNING
+    };
+
     subprocess(::uvw::loop::token _token, std::shared_ptr<::uvw::loop> _ref)
         : loop_{ std::move(_ref) }
     {
@@ -90,9 +97,14 @@ public:
 
     int kill(int _signum)
     {
+        if (state() != state::RUNNING || state() != state::STARTING) {
+            return UV_EALREADY;
+        }
+        
         if (!proc_) {
             return UV_EBADF;
         }
+        state_ = state::STOPPING;
         return proc_->kill(_signum);
     }
 
@@ -104,9 +116,9 @@ public:
         return proc_->pid();
     }
 
-    bool is_running() const noexcept
+    state state() const noexcept
     {
-        return !!proc_;
+        return state_;
     }
 
     subprocess &cwd(const std::string &_path) noexcept
@@ -135,9 +147,15 @@ public:
 
     int spawn(const char *_file, char **_args, char **_envs = nullptr)
     {
+        if (state() != state::STOPPED) {
+            return UV_EALREADY;
+        }
+
         if (proc_) {
             return UV_EALREADY;
         }
+
+        state_ = state::STARTING;
 
         __create_proc();
 
@@ -149,6 +167,8 @@ public:
             if (err_pipe_) {
                 err_pipe_->read();
             }
+
+            state_ = state::RUNNING;
         }
         else {
             if (out_pipe_) {
@@ -176,6 +196,8 @@ public:
                 err_pipe_->close();
                 err_pipe_.reset();
             }
+
+            state_ = state::STOPPED;
         }
         return result;
     }
@@ -426,7 +448,7 @@ private:
         if (proc_.get() != &_handle) {
             return;
         }
-
+        state_ = state::STOPPING;
         exit_event_ = _event;
         proc_->close();
     }
@@ -570,6 +592,7 @@ private:
             exit_cb_(exit_event_.value(), *this);
         }
         exit_event_.reset();
+        state_ = state::STOPPED;
     }
 
     std::shared_ptr<void> self_ptr_;
@@ -585,6 +608,7 @@ private:
     exit_callback  exit_cb_;
     close_callback close_cb_;    
     std::string cwd_;
+    state state_ = state::STOPPED;
     ::uvw::process_handle::process_flags flags_ = ::uvw::process_handle::process_flags::_UVW_ENUM;
     std::optional<::uvw::exit_event> exit_event_;
     ::uvw::uid_type uid_ = {0};
