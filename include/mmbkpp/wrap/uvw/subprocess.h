@@ -1,4 +1,4 @@
-
+﻿
 #ifndef MMBKPP_WRAP_UVW_SUBPROCESS_H_INCLUDED
 #define MMBKPP_WRAP_UVW_SUBPROCESS_H_INCLUDED
 
@@ -31,6 +31,7 @@ public:
         });
 
         proc_hdl_->on<::uvw::exit_event>([this](auto &_event, auto &_handle) {
+            is_running_ = false;
             if (exit_cb_) {
                 exit_cb_(_event, *this);
             }
@@ -49,6 +50,9 @@ public:
                 self_reset();
             } 
         });
+
+        proc_hdl_->uid(::uvw::uid_type{0});
+        proc_hdl_->gid(::uvw::gid_type{0});
     }
 
     ~subprocess()
@@ -75,14 +79,14 @@ public:
     subprocess &on(std::function<void(_E &, subprocess &)> _cb) noexcept
     {
         if constexpr (std::is_same_v<_E, ::uvw::data_event>) {
-            data_cb_  = std::move(_cb);
+            stdout_cb_ = std::move(_cb);
             ready_read_stdout();
         } 
         else if constexpr (std::is_same_v<_E, ::uvw::error_event>) {
             error_cb_ = std::move(_cb);
         } 
         else if constexpr (std::is_same_v<_E, ::uvw::exit_event>) {
-            exit_cb_  = std::move(_cb);
+            exit_cb_ = std::move(_cb);
         } 
         else if constexpr (std::is_same_v<_E, ::uvw::close_event>) {
             close_cb_ = std::move(_cb);
@@ -198,9 +202,14 @@ public:
         return proc_hdl_->kill(_signum);
     }
 
-    int pid() noexcept
+    int pid() const noexcept
     {
         return proc_hdl_->pid();
+    }
+
+    bool is_running() const noexcept
+    {
+        return is_running_;
     }
 
     subprocess &cwd(const std::string &_path) noexcept
@@ -229,10 +238,15 @@ public:
 
     int spawn(const char *_file, char **_args, char **_envs = nullptr)
     {
+        if (is_running_) {
+            return UV_EALREADY;
+        }
+
         if (stdout_cb_ && !err_pipe_) {
             ready_read_stderr(nullptr);
         }
 
+        is_running_ = true;
         return leak_if(proc_hdl_->spawn(_file, _args, _envs));
     }
 
@@ -321,6 +335,7 @@ private:
     error_callback error_cb_;
     exit_callback  exit_cb_;
     close_callback close_cb_;
+    bool is_running_ = false;
 };
 
 }
