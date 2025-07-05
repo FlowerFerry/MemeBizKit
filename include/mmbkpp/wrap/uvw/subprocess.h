@@ -260,8 +260,20 @@ public:
             ready_read_stderr(nullptr);
         }
 
-        is_running_ = true;
-        return proc_hdl_->spawn(_file, _args, _envs);
+        auto result = proc_hdl_->spawn(_file, _args, _envs);
+        if (result < 0) {
+            is_running_ = false;
+        }
+        else {
+            is_running_ = true;
+            if (out_pipe_) {
+                out_pipe_->read();
+            }
+            if (err_pipe_) {
+                err_pipe_->read();
+            }
+        }
+        return result;
     }
 
     int spawn(const std::string &_file, const std::vector<std::string> &_args = {}, const std::vector<std::string> &_envs = {})
