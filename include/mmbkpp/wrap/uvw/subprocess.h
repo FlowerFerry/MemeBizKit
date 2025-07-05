@@ -277,13 +277,15 @@ public:
         }
         c_args.push_back(nullptr);
 
-        std::vector<char *> c_env;
+        std::vector<char *> c_envs;
         for (const auto &e : _envs) {
-            c_env.push_back(const_cast<char *>(e.c_str()));
+            c_envs.push_back(const_cast<char *>(e.c_str()));
         }
-        c_env.push_back(nullptr);
+        if (!c_envs.empty()) {
+            c_envs.push_back(nullptr);
+        }
 
-        return spawn(_file.c_str(), c_args.data(), c_env.data());
+        return spawn(_file.c_str(), c_args.data(), c_envs.empty() ? nullptr : c_envs.data());
     }
 
     template<typename _ArgIt, typename _EnvIt>
@@ -304,9 +306,11 @@ public:
         for (auto it = _env_begin; it != _env_end; ++it) {
             c_envs.push_back(const_cast<char *>(it->c_str()));
         }
-        c_envs.push_back(nullptr);
+        if (!c_envs.empty()) {
+            c_envs.push_back(nullptr);
+        }
 
-        return spawn(_file.c_str(), c_args.data(), c_envs.data());
+        return spawn(_file.c_str(), c_args.data(), c_envs.empty() ? nullptr : c_envs.data());
     }
 
     template<typename Deleter>
