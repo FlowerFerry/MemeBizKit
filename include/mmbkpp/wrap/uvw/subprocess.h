@@ -97,7 +97,7 @@ public:
 
     int kill(int _signum)
     {
-        if (state() != state::RUNNING || state() != state::STARTING) {
+        if (state() != state::RUNNING && state() != state::STARTING) {
             return UV_EALREADY;
         }
         
