@@ -44,47 +44,47 @@ struct lexer_token
         position = std::numeric_limits<std::size_t>::max();
     }
 
-    template <typename Iterator>
-    inline lexer_token& set_operator(const type _tt,
-                                    const Iterator _begin, const Iterator _end,
-                                    const Iterator _base_begin = Iterator(0))
-    {
-        type = _tt;
-        value.assign(_begin, _end);
-        if (_base_begin)
-            position = static_cast<std::size_t>(std::distance(_base_begin, _begin));
-        return (*this);
-    }
+    // template <typename Iterator>
+    // inline lexer_token& set_operator(const type _tt,
+    //                                 const Iterator _begin, const Iterator _end,
+    //                                 const Iterator _base_begin = Iterator(0))
+    // {
+    //     type = _tt;
+    //     value.assign(_begin, _end);
+    //     if (_base_begin)
+    //         position = static_cast<std::size_t>(std::distance(_base_begin, _begin));
+    //     return (*this);
+    // }
 
-    template <typename Iterator>
-    inline lexer_token& set_symbol(const Iterator _begin, const Iterator _end, const Iterator _base_begin = Iterator(0))
-    {
-        type = e_symbol;
-        value.assign(_begin, _end);
-        if (_base_begin)
-            position = static_cast<std::size_t>(std::distance(_base_begin, _begin));
-        return (*this);
-    }
+    // template <typename Iterator>
+    // inline lexer_token& set_symbol(const Iterator _begin, const Iterator _end, const Iterator _base_begin = Iterator(0))
+    // {
+    //     type = e_symbol;
+    //     value.assign(_begin, _end);
+    //     if (_base_begin)
+    //         position = static_cast<std::size_t>(std::distance(_base_begin, _begin));
+    //     return (*this);
+    // }
 
-    template <typename Iterator>
-    inline lexer_token& set_numeric(const Iterator _begin, const Iterator _end, const Iterator _base_begin = Iterator(0))
-    {
-        type = e_number;
-        value.assign(_begin, _end);
-        if (_base_begin)
-            position = static_cast<std::size_t>(std::distance(_base_begin, _begin));
-        return (*this);
-    }
+    // template <typename Iterator>
+    // inline lexer_token& set_numeric(const Iterator _begin, const Iterator _end, const Iterator _base_begin = Iterator(0))
+    // {
+    //     type = e_number;
+    //     value.assign(_begin, _end);
+    //     if (_base_begin)
+    //         position = static_cast<std::size_t>(std::distance(_base_begin, _begin));
+    //     return (*this);
+    // }
 
-    template <typename Iterator>
-    inline lexer_token& set_string(const Iterator _begin, const Iterator _end, const Iterator _base_begin = Iterator(0))
-    {
-        type = e_string;
-        value.assign(_begin,_end);
-        if (_base_begin)
-            position = static_cast<std::size_t>(std::distance(_base_begin,_begin));
-        return (*this);
-    }
+    // template <typename Iterator>
+    // inline lexer_token& set_string(const Iterator _begin, const Iterator _end, const Iterator _base_begin = Iterator(0))
+    // {
+    //     type = e_string;
+    //     value.assign(_begin,_end);
+    //     if (_base_begin)
+    //         position = static_cast<std::size_t>(std::distance(_base_begin,_begin));
+    //     return (*this);
+    // }
 
     inline lexer_token& set_string(const memepp::string& _s, const std::size_t _p)
     {
@@ -94,31 +94,31 @@ struct lexer_token
         return (*this);
     }
 
-    template <typename Iterator>
-    inline lexer_token& set_error(const type _et,
-                                 const Iterator _begin, const Iterator _end,
-                                 const Iterator _base_begin = Iterator(0))
-    {
-        if (
-            (e_error      == _et) ||
-            (e_err_symbol == _et) ||
-            (e_err_number == _et) ||
-            (e_err_string == _et) ||
-            (e_err_sfunc  == _et)
-        )
-        {
-           type = et;
-        }
-        else
-           type = e_error;
+    // template <typename Iterator>
+    // inline lexer_token& set_error(const type _et,
+    //                              const Iterator _begin, const Iterator _end,
+    //                              const Iterator _base_begin = Iterator(0))
+    // {
+    //     if (
+    //         (e_error      == _et) ||
+    //         (e_err_symbol == _et) ||
+    //         (e_err_number == _et) ||
+    //         (e_err_string == _et) ||
+    //         (e_err_sfunc  == _et)
+    //     )
+    //     {
+    //        type = et;
+    //     }
+    //     else
+    //        type = e_error;
 
-        value.assign(_begin,_end);
+    //     value.assign(_begin,_end);
 
-        if (_base_begin)
-            position = static_cast<std::size_t>(std::distance(_base_begin,_begin));
+    //     if (_base_begin)
+    //         position = static_cast<std::size_t>(std::distance(_base_begin,_begin));
 
-        return (*this);
-    }
+    //     return (*this);
+    // }
 
     static inline memepp::string to_string(type _t)
     {
