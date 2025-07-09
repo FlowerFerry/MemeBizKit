@@ -159,7 +159,14 @@ public:
 
         __create_proc();
 
-        auto result = proc_->spawn(_file, _args, _envs);
+        std::vector<char*> c_args;
+        for (char** arg = _args; *arg; ++arg) {
+            c_args.push_back(*arg);
+        }
+        c_args.insert(c_args.begin(), const_cast<char*>(_file));
+        c_args.push_back(nullptr);
+
+        auto result = proc_->spawn(_file, c_args.data(), _envs);
         if (result == 0) {
             if (out_pipe_) {
                 out_pipe_->read();
@@ -204,14 +211,10 @@ public:
 
     int spawn(const std::string &_file, const std::vector<std::string> &_args = {}, const std::vector<std::string> &_envs = {})
     {
-        static char empty_str[] = { '\0' };
 
         std::vector<char *> c_args;
         for (const auto &arg : _args) {
             c_args.push_back(const_cast<char *>(arg.c_str()));
-        }
-        if (c_args.empty()) {
-            c_args.push_back(empty_str);
         }
         c_args.push_back(nullptr);
 
@@ -229,14 +232,10 @@ public:
     template<typename _ArgIt, typename _EnvIt>
     int spawn(const std::string &_file, _ArgIt _arg_begin, _ArgIt _arg_end, _EnvIt _env_begin, _EnvIt _env_end)
     {
-        static char empty_str[] = { '\0' };
 
         std::vector<char *> c_args;
         for (auto it = _arg_begin; it != _arg_end; ++it) {
             c_args.push_back(const_cast<char *>(it->c_str()));
-        }
-        if (c_args.empty()) {
-            c_args.push_back(empty_str);
         }
         c_args.push_back(nullptr);
 
