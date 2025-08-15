@@ -1,4 +1,4 @@
-
+﻿
 #ifndef MMBKPP_STRG_SQLITE3_HDL_HPP_INCLUDED
 #define MMBKPP_STRG_SQLITE3_HDL_HPP_INCLUDED
 
@@ -7,6 +7,7 @@
 #include <mego/err/sqlite3_convert.h>
 
 #include <megopp/err/err.hpp>
+#include <megopp/err/convert/std/error_code.h>
 #include <megopp/util/scope_cleanup.h>
 #include <outcome/result.hpp>
 

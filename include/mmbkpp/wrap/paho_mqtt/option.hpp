@@ -85,6 +85,8 @@ namespace async {
 
         ssl_options& assign(const ssl_options& _ssl_opt)
         {
+            if (this == &_ssl_opt)
+                return *this;
             trust_store_ = _ssl_opt.trust_store_;
             key_store_ = _ssl_opt.key_store_;
             private_key_ = _ssl_opt.private_key_;
@@ -275,6 +277,8 @@ namespace async {
 
         connect_options& assign(const connect_options& _conn_opt)
         {
+            if (this == &_conn_opt)
+                return *this;
             server_url_ = _conn_opt.server_url_;
             username_ = _conn_opt.username_;
             password_ = _conn_opt.password_;
