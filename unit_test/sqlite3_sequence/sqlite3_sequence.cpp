@@ -109,24 +109,37 @@ TEST_CASE("sqlite3_sequence - 01", "[sqlite3_sequence]")
             REQUIRE(ghc::filesystem::exists(
                 mm_to<memepp::native_string>(seq->filepath(2, 0))) == true );
         } while (0);
-        seq->set_max_kb(1);
+
+        ghc::filesystem::path keep_dir_path = mm_to<memepp::native_string>(seq->filepath(2, 0));
+        auto dir_iter = ghc::filesystem::directory_iterator(keep_dir_path.parent_path());
+        auto dir_end  = ghc::filesystem::directory_iterator();
+        size_t total_kb = 0;
+        for (; dir_iter != dir_end; ++dir_iter) 
+        {
+            if (!ghc::filesystem::is_regular_file(dir_iter->status()))
+                continue;
+            auto fsize = ghc::filesystem::file_size(dir_iter->path());
+                total_kb += (fsize / 1024);
+        }
+
+        seq->set_max_kb(total_kb);
         seq->try_clean_dir_to_limit();
         
         REQUIRE(ghc::filesystem::exists(
             mm_to<memepp::native_string>(seq->filepath(1, 0))) == false);
 
         auto db_filepath_2_0 = mm_to<memepp::native_string>(seq->filepath(2, 0));
-        REQUIRE(ghc::filesystem::exists(db_filepath_2_0) == false);
+        REQUIRE(ghc::filesystem::exists(db_filepath_2_0) == true);
 
         seq->set_dir_path(mmupp::fs::relative_with_program_path("new_seqs"),
             mmbkpp::strg::sqlite3_sequence::old_action_t::move_old);
         
         REQUIRE(ghc::filesystem::exists(db_filepath_2_0) == false);
         REQUIRE(ghc::filesystem::exists(
-            mm_to<memepp::native_string>(seq->filepath(2, 0))) == false);
+            mm_to<memepp::native_string>(seq->filepath(2, 0))) == true);
         
-        ghc::filesystem::remove(
-            mm_to<memepp::native_string>(seq->filepath(2, 0)));
+        ghc::filesystem::remove_all(
+            mm_to<memepp::native_string>(seq->dir_path()));
     } while (0);
 
     ghc::filesystem::remove_all(mm_to<memepp::native_string>(dir_path));
@@ -440,10 +453,15 @@ TEST_CASE("sqlite3_sequence - 08: Internal file operations (remove, move, copy)"
 
     // Test try_move_to via set_dir_path_and_move
     seq->get_rw_hdl(0, 1);  // Create another node
-    memepp::string new_dir = mmupp::fs::relative_with_program_path("moved_test_db_seqs");
-    seq->set_dir_path_and_move(new_dir);
+    memepp::string new_dir_1 = mmupp::fs::relative_with_program_path("moved_test_db_seqs_1");
+    seq->set_dir_path_and_move(new_dir_1);
     auto new_path = seq->filepath(0, 1);
     REQUIRE(ghc::filesystem::exists(mm_to<memepp::native_string>(new_path)) == true);
+
+    hdl = seq->get_rw_hdl(0, 1).value();  // Create another node
+    memepp::string new_dir_2 = mmupp::fs::relative_with_program_path("moved_test_db_seqs_2");
+    seq->set_dir_path_and_move(new_dir_2);
+    hdl.reset();
 
     // Test try_copy_to via copy_all_to_path
     memepp::string copy_dir = mmupp::fs::relative_with_program_path("copied_test_db_seqs");
@@ -454,7 +472,8 @@ TEST_CASE("sqlite3_sequence - 08: Internal file operations (remove, move, copy)"
     // Clean up
     seq.reset();
     ghc::filesystem::remove_all(mm_to<memepp::native_string>(dir_path));
-    ghc::filesystem::remove_all(mm_to<memepp::native_string>(new_dir));
+    ghc::filesystem::remove_all(mm_to<memepp::native_string>(new_dir_1));
+    ghc::filesystem::remove_all(mm_to<memepp::native_string>(new_dir_2));
     ghc::filesystem::remove_all(mm_to<memepp::native_string>(copy_dir));
 }
 

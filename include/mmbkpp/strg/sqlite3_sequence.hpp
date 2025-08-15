@@ -461,7 +461,7 @@ inline mgpp::err sqlite3_sequence::set_dir_path(const memepp::string& _path, old
     std::error_code ecode;
     if (ghc::filesystem::is_regular_file(mm_to<memepp::native_string>(_path), ecode))
         return mgpp::err{ MGEC__ERR, "path is a file" };
-    if (ecode)
+    if (ecode && ecode != std::make_error_condition(std::errc::no_such_file_or_directory))
         return mgpp::into_err(ecode);
 
     switch (_action) {
@@ -2003,23 +2003,18 @@ inline void sqlite3_sequence::on_close_hdl(const std::shared_ptr<void>& _userdat
     locker.unlock();
 
     std::unique_lock<std::mutex> index_locker(index_info->mtx_);
-    auto nit = index_info->nodes_.find(data->node_id_);
 
-    if (nit == index_info->nodes_.end()) {
-        return;
+    __node_info_sptr node_info;
+    auto nit = index_info->nodes_.find(data->node_id_);
+    if (nit != index_info->nodes_.end()) {
+        node_info = nit->second;
     }
 
-    auto node_info = nit->second;
     index_locker.unlock();
-
-    std::unique_lock<std::mutex> node_locker(node_info->mtx_);
 
     std::error_code ecode;
     // move operation
-    auto old_filepath = node_info->filepath__st();
-    if (new_filepath != old_filepath)
-    {
-        node_locker.unlock();
+    if (!node_info) {
         
         std::vector<__node_info_sptr> old_nodes;
         locker.lock();
@@ -2049,10 +2044,11 @@ inline void sqlite3_sequence::on_close_hdl(const std::shared_ptr<void>& _userdat
         for (auto& node : old_nodes) 
         {
             std::unique_lock<std::mutex> oldnode_locker(node->mtx_);
-            auto src_path = mm_to<memepp::native_string>(node->filepath__st());
+            auto filepath = node->filepath__st();
             auto copy_to_list = node->copy_to_list_;
             oldnode_locker.unlock();
-            if (!ghc::filesystem::is_regular_file(src_path, ecode))
+            auto old_filepath = mm_to<memepp::native_string>(filepath);
+            if (!ghc::filesystem::is_regular_file(old_filepath, ecode))
             {
                 continue;
             }
@@ -2068,21 +2064,23 @@ inline void sqlite3_sequence::on_close_hdl(const std::shared_ptr<void>& _userdat
                     continue;
                 }
                 
-                ghc::filesystem::copy_file(
-                    mm_to<memepp::native_string>(old_filepath),
+                copy_sqlite_file(
+                    old_filepath,
                     mm_to<memepp::native_string>(std::get<1>(copy_to)),
                     ecode);
                 if (ecode) {
-                    break;
+                    continue;
                 }
             }
             
-            ghc::filesystem::rename(src_path, mm_to<memepp::native_string>(new_filepath), ecode);
+            rename_sqlite_file(old_filepath, mm_to<memepp::native_string>(new_filepath), ecode);
             return;
         }
         return;
     }
 
+    std::unique_lock<std::mutex> node_locker(node_info->mtx_);
+    auto old_filepath = node_info->filepath__st();
     if (data->is_readonly_) {
         node_info->s_ro_hdl_.reset();
     }
@@ -2105,12 +2103,12 @@ inline void sqlite3_sequence::on_close_hdl(const std::shared_ptr<void>& _userdat
                 continue;
             }
             
-            ghc::filesystem::copy_file(
+            copy_sqlite_file(
                 mm_to<memepp::native_string>(old_filepath),
                 mm_to<memepp::native_string>(std::get<1>(copy_to)),
                 ecode);
             if (ecode) {
-                break;
+                continue;
             }
         }
         
