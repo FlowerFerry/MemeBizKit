@@ -342,8 +342,8 @@ inline mgpp::err sqlite3_sequence::__node_info::try_remove()
         ro_hdl.swap(s_ro_hdl_);
         rw_hdl.swap(s_rw_hdl_);
         src_path = filepath__st();
+        locker.unlock();
     } while (0);
-    locker.unlock();
     
     auto native_src_path = mm_to<memepp::native_string>(src_path);
     std::error_code ecode;
@@ -366,10 +366,11 @@ inline mgpp::err sqlite3_sequence::__node_info::try_move_to(const memepp::string
     do {
         sqlite3_hdl_sptr ro_hdl;
         sqlite3_hdl_sptr rw_hdl;
-        std::lock_guard<std::mutex> locker(mtx_);
+        std::unique_lock<std::mutex> locker(mtx_);
         ro_hdl.swap(s_ro_hdl_);
         rw_hdl.swap(s_rw_hdl_);
         src_path = filepath__st();
+        locker.unlock();
     } while (0);
 
     auto native_src_path = mm_to<memepp::native_string>(src_path);
@@ -1702,16 +1703,11 @@ outcome::checked<sqlite3_sequence::count_t, mgpp::err>
 outcome::checked<sqlite3_sequence::count_t, mgpp::err> sqlite3_sequence::try_close_idle_hdl()
 {
     std::unique_lock<std::mutex> locker(mtx_);
-    //if (all_hdl_status_ == hdl_status_t::busy) 
-    //{
-    //    return outcome::success(0);
-    //}
 
     if (index_infos_.empty()) {
         return outcome::success(0);
     }
 
-    //all_hdl_status_ = hdl_status_t::busy;
     auto curr_index_id = index_infos_.begin()->first;
     locker.unlock();
 
@@ -2074,7 +2070,6 @@ inline void sqlite3_sequence::on_close_hdl(const std::shared_ptr<void>& _userdat
             }
             
             rename_sqlite_file(old_filepath, mm_to<memepp::native_string>(new_filepath), ecode);
-            return;
         }
         return;
     }
