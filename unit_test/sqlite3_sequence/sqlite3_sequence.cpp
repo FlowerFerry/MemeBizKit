@@ -6,6 +6,8 @@
 
 TEST_CASE("sqlite3_sequence - 01", "[sqlite3_sequence]")
 {
+    printf("sqlite3_sequence - 01\n");
+
     mmbkpp::strg::sqlite3_sequence::global_init();
     
     memepp::string dir_path;
@@ -147,6 +149,8 @@ TEST_CASE("sqlite3_sequence - 01", "[sqlite3_sequence]")
 
 TEST_CASE("sqlite3_sequence - 02", "[sqlite3_sequence]")
 {
+    printf("sqlite3_sequence - 02\n");
+
     mmbkpp::strg::sqlite3_sequence::global_init();
     if (false)
     { }
@@ -174,16 +178,27 @@ TEST_CASE("sqlite3_sequence - 02", "[sqlite3_sequence]")
 
             });
         
+        size_t thrd_count = std::thread::hardware_concurrency();
+        if (thrd_count == 0)
+            thrd_count = 1;
+
         bool thd_exit = false;
+        bool has_rw_hdl_get_err   = false;
+        bool has_rw_hdl_write_err = false;
         std::vector<std::thread> rw_thds;
-        for (int i = 0; i < 16; ++i) 
+        for (int i = 0; i < thrd_count; ++i)
         {
-            rw_thds.emplace_back([&]()
-            {
-                while (!thd_exit)
-                {
+            rw_thds.emplace_back([&]() {
+
+                while (!thd_exit) {
+
                     auto rw_hdl_ret_i0_n0 = 
                         seq->get_rw_hdl_wait_for(0, 0, std::chrono::seconds(1));
+                    if (rw_hdl_ret_i0_n0.has_error())
+                    {
+                        has_rw_hdl_get_err = true;
+                        continue;
+                    }
 
                     auto rw_hdl_i0_n0 = rw_hdl_ret_i0_n0.value();
 
@@ -194,25 +209,31 @@ TEST_CASE("sqlite3_sequence - 02", "[sqlite3_sequence]")
                         fmt::format("name_{:0>16}", rand()),
                         rand()
                     ).data(), std::chrono::seconds(10));
-                    
-                    REQUIRE(write_err_i0_n0.code() == 0);
-                    
-                    REQUIRE(rw_hdl_ret_i0_n0.has_error() == false);
-                    //REQUIRE(rw_hdl_ret_i0_n0.has_value() == true );
+
+                    if (write_err_i0_n0) {
+                        has_rw_hdl_write_err = true;
+                        continue;
+                    }
                 }
             });
         }
 
+        bool has_ro_hdl_get_err  = false;
+        bool has_ro_hdl_read_err = false;
         std::vector<std::thread> ro_thds;
-        for (int i = 0; i < 16; ++i)
+        for (int i = 0; i < thrd_count; ++i)
         {
-            ro_thds.emplace_back([&]()
-            {
-                while (!thd_exit)
-                {
+            ro_thds.emplace_back([&]() {
+                while (!thd_exit) {
+
                     auto ro_hdl_ret_i0_n0 = 
                         seq->get_ro_hdl_wait_for(0, 0, std::chrono::seconds(1));
-                    
+                    if (ro_hdl_ret_i0_n0.has_error())
+                    {
+                        has_ro_hdl_get_err = true;
+                        continue;
+                    }
+
                     auto ro_hdl_i0_n0 = ro_hdl_ret_i0_n0.value();
                     
                     auto read_err_i0_n0 = 
@@ -224,11 +245,11 @@ TEST_CASE("sqlite3_sequence - 02", "[sqlite3_sequence]")
                     {
                         return 0;
                     });
+                    if (read_err_i0_n0) {
+                        has_ro_hdl_read_err = true;
+                        continue;
+                    }
 
-                    REQUIRE(read_err_i0_n0.code() == 0);
-
-                    REQUIRE(ro_hdl_ret_i0_n0.has_error() == false);
-                    //REQUIRE(ro_hdl_ret_i0_n0.has_value() == true );
                 }
             });
         }
@@ -247,6 +268,12 @@ TEST_CASE("sqlite3_sequence - 02", "[sqlite3_sequence]")
             thd.join();
         }
 
+        REQUIRE(has_rw_hdl_get_err   == false);
+        REQUIRE(has_rw_hdl_write_err == false);
+
+        REQUIRE(has_ro_hdl_get_err  == false);
+        REQUIRE(has_ro_hdl_read_err == false);
+
         seq.reset();
         ghc::filesystem::remove_all(mm_to<memepp::native_string>(dir_path));
     }
@@ -254,6 +281,8 @@ TEST_CASE("sqlite3_sequence - 02", "[sqlite3_sequence]")
 
 TEST_CASE("sqlite3_sequence - 03: Error handling and non-existent nodes", "[sqlite3_sequence]") 
 {
+    printf("sqlite3_sequence - 03: Error handling and non-existent nodes\n");
+
     mmbkpp::strg::sqlite3_sequence::global_init();
     
     auto seq = std::make_shared<mmbkpp::strg::sqlite3_sequence>();
@@ -271,7 +300,7 @@ TEST_CASE("sqlite3_sequence - 03: Error handling and non-existent nodes", "[sqli
     REQUIRE(rw_hdl_ret.error().code() < 0);
 
     // Test invalid directory path (e.g., file instead of dir)
-    auto err = seq->set_dir_path("invalid_file.txt");  // Assume "invalid_file.txt" is a file
+    auto err = seq->set_dir_path(mmupp::fs::relative_with_program_path("invalid_file.txt"));  // Assume "invalid_file.txt" is a file
     REQUIRE(err.code() == 0);  // Should fail as path is a file
 
     // Clean up test directory
@@ -281,6 +310,8 @@ TEST_CASE("sqlite3_sequence - 03: Error handling and non-existent nodes", "[sqli
 
 TEST_CASE("sqlite3_sequence - 04: Boundary conditions and limits", "[sqlite3_sequence]") 
 {
+    printf("sqlite3_sequence - 04: Boundary conditions and limits\n");
+
     mmbkpp::strg::sqlite3_sequence::global_init();
     
     auto seq = std::make_shared<mmbkpp::strg::sqlite3_sequence>();
@@ -313,6 +344,8 @@ TEST_CASE("sqlite3_sequence - 04: Boundary conditions and limits", "[sqlite3_seq
 }
 
 TEST_CASE("sqlite3_sequence - 05: Callbacks and logging", "[sqlite3_sequence]") {
+    printf("sqlite3_sequence - 05: Callbacks and logging\n");
+
     mmbkpp::strg::sqlite3_sequence::global_init();
     
     auto seq = std::make_shared<mmbkpp::strg::sqlite3_sequence>();
@@ -348,6 +381,8 @@ TEST_CASE("sqlite3_sequence - 05: Callbacks and logging", "[sqlite3_sequence]") 
 }
 
 TEST_CASE("sqlite3_sequence - 06: File operations (copy, move, checkpoint)", "[sqlite3_sequence]") {
+    printf("sqlite3_sequence - 06: File operations (copy, move, checkpoint)\n");
+
     mmbkpp::strg::sqlite3_sequence::global_init();
     
     auto seq = std::make_shared<mmbkpp::strg::sqlite3_sequence>();
@@ -382,6 +417,8 @@ TEST_CASE("sqlite3_sequence - 06: File operations (copy, move, checkpoint)", "[s
 }
 
 TEST_CASE("sqlite3_sequence - 07: Advanced multi-threading and close callbacks", "[sqlite3_sequence]") {
+    printf("sqlite3_sequence - 07: Advanced multi-threading and close callbacks\n");
+
     mmbkpp::strg::sqlite3_sequence::global_init();
     
     auto seq = std::make_shared<mmbkpp::strg::sqlite3_sequence>();
@@ -434,6 +471,8 @@ TEST_CASE("sqlite3_sequence - 07: Advanced multi-threading and close callbacks",
 }
 
 TEST_CASE("sqlite3_sequence - 08: Internal file operations (remove, move, copy)", "[sqlite3_sequence]") {
+    printf("sqlite3_sequence - 08: Internal file operations (remove, move, copy)\n");
+
     mmbkpp::strg::sqlite3_sequence::global_init();
     
     auto seq = std::make_shared<mmbkpp::strg::sqlite3_sequence>();
@@ -478,8 +517,10 @@ TEST_CASE("sqlite3_sequence - 08: Internal file operations (remove, move, copy)"
 }
 
 TEST_CASE("sqlite3_sequence - 09: Configuration changes and failures", "[sqlite3_sequence]") {
+    printf("sqlite3_sequence - 09: Configuration changes and failures\n");
+
     mmbkpp::strg::sqlite3_sequence::global_init();
-    
+
     auto seq = std::make_shared<mmbkpp::strg::sqlite3_sequence>();
     auto dir_path = mmupp::fs::relative_with_program_path("test_db_seqs");
     seq->set_dir_path(dir_path);
@@ -518,6 +559,8 @@ TEST_CASE("sqlite3_sequence - 09: Configuration changes and failures", "[sqlite3
 }
 
 TEST_CASE("sqlite3_sequence - 10: Idle checkpoints and preclose callback", "[sqlite3_sequence]") {
+    printf("sqlite3_sequence - 10: Idle checkpoints and preclose callback\n");
+
     mmbkpp::strg::sqlite3_sequence::global_init();
     
     auto seq = std::make_shared<mmbkpp::strg::sqlite3_sequence>();
@@ -546,6 +589,8 @@ TEST_CASE("sqlite3_sequence - 10: Idle checkpoints and preclose callback", "[sql
 }
 
 TEST_CASE("sqlite3_sequence - 11: Resource management and retry mechanisms", "[sqlite3_sequence]") {
+    printf("sqlite3_sequence - 11: Resource management and retry mechanisms\n");
+
     mmbkpp::strg::sqlite3_sequence::global_init();
     
     auto seq = std::make_shared<mmbkpp::strg::sqlite3_sequence>();
@@ -578,6 +623,8 @@ TEST_CASE("sqlite3_sequence - 11: Resource management and retry mechanisms", "[s
 }
 
 TEST_CASE("sqlite3_sequence - 12: Platform-specific and remove_sqlite_file", "[sqlite3_sequence]") {
+    printf("sqlite3_sequence - 12: Platform-specific and remove_sqlite_file\n");
+
     mmbkpp::strg::sqlite3_sequence::global_init();  // Test multiple calls (should be idempotent)
     
     auto seq = std::make_shared<mmbkpp::strg::sqlite3_sequence>();
@@ -615,6 +662,8 @@ TEST_CASE("sqlite3_sequence - 12: Platform-specific and remove_sqlite_file", "[s
 }
 
 TEST_CASE("sqlite3_sequence - 13: Large-scale operations and performance", "[sqlite3_sequence]") {
+    printf("sqlite3_sequence - 13: Large-scale operations and performance\n");
+
     mmbkpp::strg::sqlite3_sequence::global_init();
     
     auto seq = std::make_shared<mmbkpp::strg::sqlite3_sequence>();
@@ -646,6 +695,8 @@ TEST_CASE("sqlite3_sequence - 13: Large-scale operations and performance", "[sql
 }
 
 TEST_CASE("sqlite3_sequence - 14: Exception injection and robustness", "[sqlite3_sequence]") {
+    printf("sqlite3_sequence - 14: Exception injection and robustness\n");
+
     mmbkpp::strg::sqlite3_sequence::global_init();
     
     auto seq = std::make_shared<mmbkpp::strg::sqlite3_sequence>();
@@ -656,7 +707,7 @@ TEST_CASE("sqlite3_sequence - 14: Exception injection and robustness", "[sqlite3
     seq->get_rw_hdl(0, 0);
 
     // Simulate file system error (e.g., make directory read-only; this is platform-dependent, simulate via invalid path)
-    memepp::string invalid_path = "/*?<>|:invalid_nonexistent_path";  // Should cause creation failure
+    memepp::string invalid_path = mmupp::fs::relative_with_program_path("*?<>|:invalid_nonexistent_path");  // Should cause creation failure
     auto set_err = seq->set_dir_path_and_move(invalid_path);
     REQUIRE(set_err.code() != MGEC__OK);
 
@@ -680,6 +731,8 @@ TEST_CASE("sqlite3_sequence - 14: Exception injection and robustness", "[sqlite3
 }
 
 TEST_CASE("sqlite3_sequence - 15: Weak pointers, userdata, and empty operations", "[sqlite3_sequence]") {
+    printf("sqlite3_sequence - 15: Weak pointers, userdata, and empty operations\n");
+
     mmbkpp::strg::sqlite3_sequence::global_init();
     
     // Test default constructor and empty ops
@@ -720,6 +773,8 @@ TEST_CASE("sqlite3_sequence - 15: Weak pointers, userdata, and empty operations"
 }
 
 TEST_CASE("sqlite3_sequence - 16: Advanced retries and timeouts in multi-thread", "[sqlite3_sequence]") {
+    printf("sqlite3_sequence - 16: Advanced retries and timeouts in multi-thread\n");
+
     mmbkpp::strg::sqlite3_sequence::global_init();
     
     auto seq = std::make_shared<mmbkpp::strg::sqlite3_sequence>();
@@ -762,6 +817,8 @@ TEST_CASE("sqlite3_sequence - 16: Advanced retries and timeouts in multi-thread"
 }
 
 TEST_CASE("sqlite3_sequence - 17: try_checkpoint_idle_files functionality", "[sqlite3_sequence]") {
+    printf("sqlite3_sequence - 17: try_checkpoint_idle_files functionality\n");
+
     mmbkpp::strg::sqlite3_sequence::global_init();
 
     auto seq = std::make_shared<mmbkpp::strg::sqlite3_sequence>();
@@ -854,7 +911,7 @@ TEST_CASE("sqlite3_sequence - 17: try_checkpoint_idle_files functionality", "[sq
 
     SECTION("Error cases: Directory not exists or handle busy") {
         // Non-existent directory
-        seq->set_dir_path("/*?<>|:invalid_nonexistent_path");
+        seq->set_dir_path(mmupp::fs::relative_with_program_path("*?<>|:invalid_nonexistent_path"));
         auto ret = seq->try_checkpoint_idle_files(1);
         REQUIRE(ret.has_error() == true);  // Should fail (e.g., NOENT or similar)
 
