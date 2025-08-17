@@ -1984,6 +1984,7 @@ inline void sqlite3_sequence::on_close_hdl(const std::shared_ptr<void>& _userdat
 
     auto seq = data->seq_.lock();
     if (!seq) {
+        // TO_DO: 直接返回而不处理文件，可能导致文件泄漏（未移动/删除）。
         return;
     }
     
