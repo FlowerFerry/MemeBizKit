@@ -2071,6 +2071,8 @@ inline void sqlite3_sequence::on_close_hdl(const std::shared_ptr<void>& _userdat
             }
             
             rename_sqlite_file(old_filepath, mm_to<memepp::native_string>(new_filepath), ecode);
+            // Just copy it once
+            return;
         }
         return;
     }
