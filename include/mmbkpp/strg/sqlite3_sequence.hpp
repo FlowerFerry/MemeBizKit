@@ -2153,7 +2153,8 @@ inline void sqlite3_sequence::copy_sqlite_file(
     ghc::filesystem::copy(_from, _to, _ec);
     if (_ec)
         return;
-    ghc::filesystem::copy(_from.native() + MMN_TEXT("-wal"), _to.native() + MMN_TEXT("-wal"), _ec);
+    std::error_code ec;
+    ghc::filesystem::copy(_from.native() + MMN_TEXT("-wal"), _to.native() + MMN_TEXT("-wal"), ec);
 }
 
 inline void sqlite3_sequence::rename_sqlite_file(
