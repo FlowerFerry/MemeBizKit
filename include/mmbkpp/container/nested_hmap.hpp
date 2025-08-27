@@ -5,6 +5,17 @@
 #include <unordered_map>
 #include <type_traits>
 
+/**
+ * @file nested_hmap.hpp
+ * @brief 该头文件实现了嵌套的哈希映射（unordered_map）结构，支持多层键值嵌套。
+ *
+ * 主要类：nested_layered_hmap，用于创建任意层数的嵌套无序映射。
+ * 用途：简化多级键值数据的存储和访问，例如配置管理、数据分组等场景。
+ * 作者/来源：基于提供的代码。
+ * 注意：该实现使用模板递归，支持变参模板定义层数。
+ * 示例：nested_hmap<int, std::string, int> 等价于 std::unordered_map<std::string, std::unordered_map<int, int>>。
+ */
+
 namespace mmbkpp {
 namespace container {
 namespace nested_hmap_details {
@@ -23,6 +34,15 @@ struct function_inferred<_TValue, _TLayer>
 
 }
 
+/**
+ * @brief 层级配置结构体：nested_hmap_layer
+ *
+ * 用途：定义每一层的键类型、哈希函数和相等比较器。
+ *
+ * @tparam _TKey 该层的键类型。
+ * @tparam _THash 哈希函数类型（默认为 std::hash<_TKey>）。
+ * @tparam _TEqual 相等比较器类型（默认为 std::equal_to<_TKey>）。
+ */
 template<typename _TKey, typename _THash = std::hash<_TKey>, typename _TEqual = std::equal_to<_TKey>>
 struct nested_hmap_layer
 {
@@ -31,6 +51,18 @@ struct nested_hmap_layer
     using equal_type = _TEqual;
 };
 
+/**
+ * @brief 主类：nested_layered_hmap（多层版本）
+ *
+ * 用途：实现多层嵌套的哈希映射。当前层是一个 unordered_map，映射到下一个层的 nested_layered_hmap。
+ * 该类通过递归模板实现嵌套：如果有后续层，则 mapped_type 为下一个 nested_layered_hmap；否则为 _TValue。
+ * 注意：该版本适用于两层或更多层；单层有特化版本。
+ *
+ * @tparam _THashMap 底层哈希映射的模板（例如 std::unordered_map，必须接受 <Key, Value, Hash, Equal> 参数）。
+ * @tparam _TValue 最底层的值类型（leaf node 的类型）。
+ * @tparam _TLayer 当前层的配置（nested_hmap_layer 类型）。
+ * @tparam _TLayers 后续层的配置（变参，支持任意层数）。
+ */
 template<template<typename...> typename _THashMap, typename _TValue, typename _TLayer, typename... _TLayers>
 class nested_layered_hmap
 {
@@ -157,6 +189,16 @@ private:
     used_map_type maps_;
 };
 
+/**
+ * @brief 主类：nested_layered_hmap（单层特化版本）
+ *
+ * 用途：当只剩一层时（基础递归情况），直接映射到 _TValue，而不是下一个映射。
+ * 该特化处理嵌套的终止条件：当前层是 unordered_map<key_type, _TValue>。
+ *
+ * @tparam _THashMap 底层哈希映射的模板。
+ * @tparam _TValue 值类型。
+ * @tparam _TLayer 当前层的配置。
+ */
 template<template<typename...> typename _THashMap, typename _TValue, typename _TLayer>
 class nested_layered_hmap<_THashMap, _TValue, _TLayer>
 {
@@ -281,6 +323,16 @@ private:
     used_map_type maps_;
 };
 
+/**
+ * @brief 别名：nested_hmap
+ *
+ * 用途：简化创建嵌套映射的语法，使用 std::unordered_map 作为默认 _THashMap。
+ *
+ * @tparam _TValue 值类型。
+ * @tparam _TKeys 各层的键类型（自动包装为 nested_hmap_layer<_TKeys>）。
+ *
+ * 示例：nested_hmap<double, std::string, int> 创建两层映射：string -> int -> double。
+ */
 template<typename _TValue, typename... _TKeys>
 using nested_hmap = nested_layered_hmap<std::unordered_map, _TValue, nested_hmap_layer<_TKeys>...>;
 
