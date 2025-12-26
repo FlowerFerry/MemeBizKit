@@ -2153,8 +2153,10 @@ inline void sqlite3_sequence::copy_sqlite_file(
     ghc::filesystem::copy(_from, _to, _ec);
     if (_ec)
         return;
-    std::error_code ec;
-    ghc::filesystem::copy(_from.native() + MMN_TEXT("-wal"), _to.native() + MMN_TEXT("-wal"), ec);
+    std::error_code ign;
+    ghc::filesystem::copy(_from.native() + MMN_TEXT("-wal"), _to.native() + MMN_TEXT("-wal"), ign);
+    ghc::filesystem::copy(_from.native() + MMN_TEXT("-shm"), _to.native() + MMN_TEXT("-shm"), ign);
+    // TO_DO: fsync dir if needed
 }
 
 inline void sqlite3_sequence::rename_sqlite_file(
@@ -2163,23 +2165,30 @@ inline void sqlite3_sequence::rename_sqlite_file(
     ghc::filesystem::rename(_from, _to, _ec);
     if (_ec)
         return;
-    std::error_code ec;
-    ghc::filesystem::rename(_from.native() + MMN_TEXT("-wal"), _to.native() + MMN_TEXT("-wal"), ec);
+    std::error_code ign;
+    ghc::filesystem::rename(_from.native() + MMN_TEXT("-wal"), _to.native() + MMN_TEXT("-wal"), ign);
+    ghc::filesystem::rename(_from.native() + MMN_TEXT("-shm"), _to.native() + MMN_TEXT("-shm"), ign);
+    from_dir = ghc::filesystem::absolute(_from).lexically_normal().parent_path();
+    to_dir   = ghc::filesystem::absolute(_to  ).lexically_normal().parent_path();
+    if (from_dir != to_dir) {
+        // TO_DO: fsync both dirs if needed
+        if (!from_dir.empty()) {
+        }
+        if (!to_dir.empty()) {   
+        }
+    }
 }
 
 inline bool sqlite3_sequence::remove_sqlite_file(const ghc::filesystem::path& _path, std::error_code& _ec)
 {
-    bool result = false;
-    result = ghc::filesystem::remove(_path, _ec);
+    bool result = ghc::filesystem::remove(_path, _ec);
     if (_ec)
         return result;
     
-    std::error_code ec;
-    ghc::filesystem::path p; 
-    p = _path.native() + MMN_TEXT("-shm");
-    ghc::filesystem::remove(p, ec);
-    p = _path.native() + MMN_TEXT("-wal");
-    ghc::filesystem::remove(p, ec);
+    std::error_code ign;
+    ghc::filesystem::remove(_path.native() + MMN_TEXT("-wal"), ign);
+    ghc::filesystem::remove(_path.native() + MMN_TEXT("-shm"), ign);
+    // TO_DO: fsync dir if needed
     
     return result;
 }
