@@ -61,6 +61,11 @@ struct sqlite3_hdl
         return userdata_;
     }
 
+    inline void set_userdata(const std::shared_ptr<void>& userdata) noexcept
+    {
+        userdata_ = userdata;
+    }
+
     inline void set_close_cb(close_cb_t cb) noexcept
     {
         on_close_ = cb;
@@ -69,11 +74,6 @@ struct sqlite3_hdl
     inline void set_preclose_cb(preclose_cb_t cb) noexcept
     {
         on_preclose_ = cb;
-    }
-
-    inline void set_userdata(const std::shared_ptr<void>& userdata) noexcept
-    {
-        userdata_ = userdata;
     }
 
     template<typename _Fn>
@@ -115,6 +115,19 @@ private:
         , userdata_(nullptr)
     {}
 
+    template<typename _Op>
+    static mgpp::err __retry_loop(_Op&& _op, std::chrono::milliseconds _ms)
+    {
+        auto start = std::chrono::steady_clock::now();
+        do {
+            auto err = _op();
+            if (err != mgpp::make_err_cond(MGEC__DATABASE_BUSY, mgpp::get_genrc_err_cat())) 
+                return err;
+            std::this_thread::yield();
+        } while (std::chrono::steady_clock::now() - start < _ms);
+        return mgpp::err{ MGEC__DATABASE_BUSY, "sqlite handle is busy" };
+    }
+
     template <typename _Fn>
     struct __exec_ctx
     {
@@ -152,7 +165,7 @@ inline mgpp::err sqlite3_hdl::do_read(const char* _sql, _Fn && _fn)
     __exec_ctx<_Fn> ctx(std::forward<_Fn>(_fn));
     int rc = ::sqlite3_exec(hdl_, _sql, &__exec_ctx<_Fn>::exec_cb, &ctx, &errmsg);
     if (MEGO_SYMBOL__UNLIKELY(rc != SQLITE_OK)) {
-        return mgpp::err{ mgec__from_sqlite3_err(rc), errmsg };
+        return mgpp::err{ mgec__from_sqlite3_err(rc), errmsg ? errmsg : "unknown error" };
     }
 
     return mgpp::err::make_ok();
@@ -162,18 +175,7 @@ template<typename _Fn>
 mgpp::err sqlite3_hdl::do_read_wait_for(
     const char* _sql, const std::chrono::milliseconds& _ms, _Fn&& _fn)
 {
-    auto start = std::chrono::steady_clock::now();
-    do {
-        auto err = do_read(_sql, std::forward<_Fn>(_fn));
-        if (err.code() == MGEC__DATABASE_BUSY) 
-        {
-            std::this_thread::yield();
-            continue;
-        }
-        return err;
-    } while (std::chrono::steady_clock::now() - start < _ms);
-
-    return mgpp::err{ MGEC__DATABASE_BUSY, "sqlite handle is busy" };
+    return __retry_loop([&] { return do_read(_sql, std::forward<_Fn>(_fn)); }, _ms);
 }
 
 inline mgpp::err sqlite3_hdl::do_write(const char* _sql)
@@ -190,7 +192,7 @@ inline mgpp::err sqlite3_hdl::do_write(const char* _sql)
     MEGOPP_UTIL__ON_SCOPE_CLEANUP([&] { ::sqlite3_free(errmsg); });
     int rc = ::sqlite3_exec(hdl_, _sql, nullptr, nullptr, &errmsg);
     if (MEGO_SYMBOL__UNLIKELY(rc != SQLITE_OK)) {
-        return mgpp::err{ mgec__from_sqlite3_err(rc), errmsg };
+        return mgpp::err{ mgec__from_sqlite3_err(rc), errmsg ? errmsg : "unknown error" };
     }
 
     return mgpp::err::make_ok();
@@ -199,18 +201,7 @@ inline mgpp::err sqlite3_hdl::do_write(const char* _sql)
 inline mgpp::err sqlite3_hdl::do_write_wait_for(
     const char* _sql, const std::chrono::milliseconds& _ms)
 {
-    auto start = std::chrono::steady_clock::now();
-    do {
-        auto err = do_write(_sql);
-        if (err.code() == MGEC__DATABASE_BUSY)
-        {
-            std::this_thread::yield();
-            continue;
-        }
-        return err;
-    } while (std::chrono::steady_clock::now() - start < _ms);
-
-    return mgpp::err{ MGEC__DATABASE_BUSY, "sqlite handle is busy" };
+    return __retry_loop([&] { return do_write(_sql); }, _ms);
 }
 
 template <typename _Fn>
@@ -228,7 +219,7 @@ inline mgpp::err sqlite3_hdl::do_writes(_Fn && _fn)
     MEGOPP_UTIL__ON_SCOPE_CLEANUP([&] { ::sqlite3_free(errmsg); });
     int rc = ::sqlite3_exec(hdl_, "BEGIN TRANSACTION", nullptr, nullptr, &errmsg);
     if (MEGO_SYMBOL__UNLIKELY(rc != SQLITE_OK)) {
-        return mgpp::err{ mgec__from_sqlite3_err(rc), errmsg };
+        return mgpp::err{ mgec__from_sqlite3_err(rc), errmsg ? errmsg : "unknown error" };
     }
     auto cleanup = megopp::util::scope_cleanup__create(
         [&] { ::sqlite3_exec(hdl_, "ROLLBACK TRANSACTION", nullptr, nullptr, nullptr); });
@@ -240,7 +231,7 @@ inline mgpp::err sqlite3_hdl::do_writes(_Fn && _fn)
 
     rc = ::sqlite3_exec(hdl_, "COMMIT TRANSACTION", nullptr, nullptr, &errmsg);
     if (MEGO_SYMBOL__UNLIKELY(rc != SQLITE_OK)) {
-        return mgpp::err{ mgec__from_sqlite3_err(rc), errmsg };
+        return mgpp::err{ mgec__from_sqlite3_err(rc), errmsg ? errmsg : "unknown error" };
     }
 
     cleanup.cancel();
@@ -251,42 +242,32 @@ template<typename _Fn>
 inline mgpp::err sqlite3_hdl::do_writes_wait_for(
     const std::chrono::milliseconds& _ms, _Fn&& _fn)
 {
-    auto start = std::chrono::steady_clock::now();
-    do {
-        auto err = do_writes(std::forward<_Fn>(_fn));
-        if (err.code() == MGEC__DATABASE_BUSY)
-        {
-            std::this_thread::yield();
-            continue;
-        }
-        return err;
-    } while (std::chrono::steady_clock::now() - start < _ms);
-
-    return mgpp::err{ MGEC__DATABASE_BUSY, "sqlite handle is busy" };
+    return __retry_loop([&] { return do_writes(std::forward<_Fn>(_fn)); }, _ms);
 }
 
 inline outcome::checked<std::unique_ptr<sqlite3_hdl>, mgpp::err> 
-    sqlite3_hdl::open(const char* filename, int flags)
+    sqlite3_hdl::open(const char* _filename, int _flags, int _busy_timeout = 5000)
 {
     ::sqlite3* hdl = nullptr;
-    int rc = ::sqlite3_open_v2(filename, &hdl, flags, nullptr);
+    int rc = ::sqlite3_open_v2(_filename, &hdl, _flags, nullptr);
     if (MEGO_SYMBOL__LIKELY(rc == SQLITE_OK))
+    {
+        if (_busy_timeout > 0)
+            ::sqlite3_busy_timeout(hdl, _busy_timeout);
         return take(hdl);
+    }
 
     ::sqlite3_close(hdl);
     return mgpp::err{ mgec__from_sqlite3_err(rc) };
 }
 
 inline outcome::checked<std::shared_ptr<sqlite3_hdl>, mgpp::err>
-    sqlite3_hdl::open_to_shared(const char* filename, int flags)
-{
-    ::sqlite3* hdl = nullptr;
-    int rc = ::sqlite3_open_v2(filename, &hdl, flags, nullptr);
-    if (MEGO_SYMBOL__LIKELY(rc == SQLITE_OK))
-        return take_to_shared(hdl);
-    
-    ::sqlite3_close(hdl);
-    return mgpp::err{ mgec__from_sqlite3_err(rc) };
+    sqlite3_hdl::open_to_shared(const char* _filename, int _flags, int _busy_timeout = 5000)
+{    
+    auto res = open(_filename, _flags, _busy_timeout);
+    if (res) 
+        return std::shared_ptr<sqlite3_hdl>(res.value().release());
+    return res.error();
 }
 
 } } // namespace mmbkpp

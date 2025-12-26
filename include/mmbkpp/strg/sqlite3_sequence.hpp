@@ -977,7 +977,7 @@ outcome::checked<sqlite3_hdl_sptr, mgpp::err>
         }
         
         err = result.error();
-        if (result.error().code() == MGEC__NOENT)
+        if (result.error() == mgpp::make_err_cond(MGEC__NOENT, mgpp::get_genrc_err_cat()))
             break;
         std::this_thread::yield();
     } while (std::chrono::steady_clock::now() - start < _ms);
@@ -1021,7 +1021,7 @@ outcome::checked<sqlite3_hdl_sptr, mgpp::err>
         }
             
         err = result.error();
-        if (result.error().code() == MGEC__NOENT)
+        if (result.error() == mgpp::make_err_cond(MGEC__NOENT, mgpp::get_genrc_err_cat()))
             break;
         std::this_thread::yield();
     } while (std::chrono::steady_clock::now() - start < _ms);
