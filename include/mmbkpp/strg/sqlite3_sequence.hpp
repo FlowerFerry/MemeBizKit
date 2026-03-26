@@ -2168,8 +2168,8 @@ inline void sqlite3_sequence::rename_sqlite_file(
     std::error_code ign;
     ghc::filesystem::rename(_from.native() + MMN_TEXT("-wal"), _to.native() + MMN_TEXT("-wal"), ign);
     ghc::filesystem::rename(_from.native() + MMN_TEXT("-shm"), _to.native() + MMN_TEXT("-shm"), ign);
-    from_dir = ghc::filesystem::absolute(_from).lexically_normal().parent_path();
-    to_dir   = ghc::filesystem::absolute(_to  ).lexically_normal().parent_path();
+    auto from_dir = ghc::filesystem::absolute(_from).lexically_normal().parent_path();
+    auto to_dir   = ghc::filesystem::absolute(_to  ).lexically_normal().parent_path();
     if (from_dir != to_dir) {
         // TO_DO: fsync both dirs if needed
         if (!from_dir.empty()) {
