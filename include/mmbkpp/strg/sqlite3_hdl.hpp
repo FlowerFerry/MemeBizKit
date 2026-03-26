@@ -254,11 +254,11 @@ inline outcome::checked<std::unique_ptr<sqlite3_hdl>, mgpp::err>
     {
         if (_busy_timeout > 0)
             ::sqlite3_busy_timeout(hdl, _busy_timeout);
-        return take(hdl);
+        return outcome::success(take(hdl));
     }
 
     ::sqlite3_close(hdl);
-    return mgpp::err{ mgec__from_sqlite3_err(rc) };
+    return outcome::failure(mgpp::err{ mgec__from_sqlite3_err(rc) });
 }
 
 inline outcome::checked<std::shared_ptr<sqlite3_hdl>, mgpp::err>
@@ -266,8 +266,8 @@ inline outcome::checked<std::shared_ptr<sqlite3_hdl>, mgpp::err>
 {    
     auto res = open(_filename, _flags, _busy_timeout);
     if (res) 
-        return std::shared_ptr<sqlite3_hdl>(res.value().release());
-    return res.error();
+        return outcome::success(std::shared_ptr<sqlite3_hdl>(res.value().release()));
+    return outcome::failure(res.error());
 }
 
 } } // namespace mmbkpp
