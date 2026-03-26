@@ -103,9 +103,9 @@ struct sqlite3_hdl
     }
 
     static outcome::checked<std::unique_ptr<sqlite3_hdl>, mgpp::err> 
-        open(const char* filename, int flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE);
+        open(const char* filename, int flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, int busy_timeout = 5000);
     static outcome::checked<std::shared_ptr<sqlite3_hdl>, mgpp::err> 
-        open_to_shared(const char* filename, int flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE);
+        open_to_shared(const char* filename, int flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, int busy_timeout = 5000);
 
 private:
     sqlite3_hdl(::sqlite3* _hdl) noexcept 
@@ -246,7 +246,7 @@ inline mgpp::err sqlite3_hdl::do_writes_wait_for(
 }
 
 inline outcome::checked<std::unique_ptr<sqlite3_hdl>, mgpp::err> 
-    sqlite3_hdl::open(const char* _filename, int _flags, int _busy_timeout = 5000)
+    sqlite3_hdl::open(const char* _filename, int _flags, int _busy_timeout)
 {
     ::sqlite3* hdl = nullptr;
     int rc = ::sqlite3_open_v2(_filename, &hdl, _flags, nullptr);
@@ -262,7 +262,7 @@ inline outcome::checked<std::unique_ptr<sqlite3_hdl>, mgpp::err>
 }
 
 inline outcome::checked<std::shared_ptr<sqlite3_hdl>, mgpp::err>
-    sqlite3_hdl::open_to_shared(const char* _filename, int _flags, int _busy_timeout = 5000)
+    sqlite3_hdl::open_to_shared(const char* _filename, int _flags, int _busy_timeout)
 {    
     auto res = open(_filename, _flags, _busy_timeout);
     if (res) 
