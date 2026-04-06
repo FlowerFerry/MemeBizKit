@@ -1,4 +1,4 @@
-
+﻿
 #ifndef MMBKPP_APP_TEXT_FILE_MONITOR_HPP_INCLUDED
 #define MMBKPP_APP_TEXT_FILE_MONITOR_HPP_INCLUDED
 
@@ -124,11 +124,11 @@ namespace mmbkpp::app {
             return -1;
 
         if (_loop == nullptr) {
-            loop_ = std::make_shared<uvw::Loop>();
+            loop_ = uvw::loop::create();
             internal_loop_ = true;
         }
         else {
-            loop_ = uvw::Loop::create(_loop);
+            loop_ = uvw::loop::create(_loop);
             internal_loop_ = false;
         }
 
@@ -207,7 +207,7 @@ namespace mmbkpp::app {
         auto parse_cb = parse_callback_;
         locker.unlock();
         auto object = std::make_shared<object_t>();
-        if (!(*parse_cb)(_data, *object))
+        if (!(*parse_cb)(_data, object))
             return;
         locker.lock();
         curr_object_ = object;
@@ -360,7 +360,13 @@ namespace mmbkpp::app {
             }
         }
     }
-    
+
+    template<typename _Object>
+    void txtfile_monitor<_Object>::__read_file_once()
+    {
+        // TODO
+    }
+
 };
 
 #endif // !MMBKPP_APP_TEXT_FILE_MONITOR_HPP_INCLUDED

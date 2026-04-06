@@ -33,6 +33,7 @@
 namespace mmbkpp {
 namespace app {
 
+    //! @deprecated This class is deprecated
     struct translation_loader
     {
         using table_t = std::unordered_map<memepp::string_view, memepp::string>;
@@ -59,6 +60,7 @@ namespace app {
     //!         }
     //!     ]
     //! }
+    //! @deprecated This class is deprecated
     struct json_translation_loader : public translation_loader
     {
         virtual ~json_translation_loader() = default;
@@ -73,7 +75,7 @@ namespace app {
         std::shared_ptr<table_t> table_;
     };
 
-    //! @deprecated
+    //! @deprecated This class is deprecated
     struct translation_mapper
     {
         using code_t = memepp::string;
