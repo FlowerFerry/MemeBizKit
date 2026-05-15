@@ -84,7 +84,7 @@ namespace chrono {
 		
 		inline bool timing_notcall(mgu_timestamp_t _curr)
 		{
-			if (interval_ <= 0 || !isStart_)
+			if (interval_ < 0 || !isStart_)
 				return true;
 
 			if (MG_SYM__UNLIKELY(_curr < lastTs_)) 
@@ -236,7 +236,7 @@ namespace chrono {
 			passive_timer::on(__on_passive_function_timer, this);
 		}
 
-		passive_function_timer(const passive_function_timer& _other) noexcept 
+		passive_function_timer(const passive_function_timer& _other) 
 			: passive_timer(_other), fn_(_other.fn_)
 		{
 			passive_timer::on(__on_passive_function_timer, this);
@@ -248,7 +248,7 @@ namespace chrono {
 			passive_timer::on(__on_passive_function_timer, this);
 		}
 
-		passive_function_timer& operator=(const passive_function_timer& _other) noexcept 
+		passive_function_timer& operator=(const passive_function_timer& _other) 
 		{
 			if (this != &_other) {
 				passive_timer::operator=(_other);
@@ -758,17 +758,38 @@ namespace chrono {
 				continue;
 
 			bool isDie = false;
-            if ((*it)->timing(ts, &isDie))
-            {
+    		bool triggered = false;
+
+			try {
+				triggered = (*it)->timing(ts, &isDie);
+			} catch (...) {
+				
+                auto backup = *it;
+				timers_.erase(it);
+				if (isDie  && !backup->is_once())
+					backup->isStart_ = false;
+				if (!isDie && !backup->is_once())
+				{
+					auto wa_it = std::find(wait_accepts_.begin(), wait_accepts_.end(), backup);
+					if (wa_it == wait_accepts_.end()) {
+						wait_accepts_.push_back(backup);
+					}
+				}
+				throw;
+			}
+
+            if (triggered) {
 				if (remove_and_iteration(it)) 
 				{
-					// The timer callback has been triggered and the timer removed, as per the design, the loop must be interrupted
+					ts = mgu_timestamp_get();
 					hasCall = true;
-					break;
+					continue;
 				}
 
                 auto backup = *it;
 				it = timers_.erase(it);
+				if (isDie  && !backup->is_once())
+					backup->isStart_ = false;
 				if (!isDie && !backup->is_once()) 
 				{
 					auto wa_it = std::find(wait_accepts_.begin(), wait_accepts_.end(), backup);
