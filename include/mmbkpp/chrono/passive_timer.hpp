@@ -51,7 +51,13 @@ namespace chrono {
 			cb_(nullptr)
 		{}
 
+        passive_timer(const passive_timer& _other) noexcept;
+        passive_timer(passive_timer&& _other) noexcept;
+
 		virtual ~passive_timer();
+
+        passive_timer& operator=(const passive_timer& _other) noexcept;
+        passive_timer& operator=(passive_timer&& _other) noexcept;
 
         virtual inline void set_ticker(const std::weak_ptr<ticker>& _ticker) noexcept { ticker_ = _ticker; }
 
@@ -102,9 +108,14 @@ namespace chrono {
 			
 			if (count_ >= interval_)
 			{
-				count_ = 0;
+                if (interval_ > 0 && count_ <= 2 * interval_) 
+				{
+					count_ %= interval_;
+                } else {
+                    count_ = 0;
+                }
+
 				if (isOnce_) {
-					isOnce_  = false;
 					isStart_ = false;
 				}
 				if (cb_) {
@@ -159,17 +170,19 @@ namespace chrono {
 
 		void remove(passive_timer* _timer) noexcept 
 		{
-            if (locked_) {
+            if (locked()) {
                 wait_removes_.insert(_timer);
                 return;
             }
 			
-			for (auto it = timers_.begin(); it != timers_.end(); ++it)
-			{
-				if (*it == _timer) {
-					timers_.erase(it);
-					break;
-				}
+			auto tm_it = std::find(timers_.begin(), timers_.end(), _timer);
+			if (tm_it != timers_.end()) {
+				timers_.erase(tm_it);
+			}
+
+			auto wa_it = std::find(wait_accepts_.begin(), wait_accepts_.end(), _timer);
+			if (wa_it != wait_accepts_.end()) {
+				wait_accepts_.erase(wa_it);
 			}
         }
 		
@@ -223,6 +236,38 @@ namespace chrono {
 			passive_timer::on(__on_passive_function_timer, this);
 		}
 
+		passive_function_timer(const passive_function_timer& _other) noexcept 
+			: passive_timer(_other), fn_(_other.fn_)
+		{
+			passive_timer::on(__on_passive_function_timer, this);
+		}
+
+		passive_function_timer(passive_function_timer&& _other) noexcept 
+			: passive_timer(std::move(_other)), fn_(std::move(_other.fn_))
+		{
+			passive_timer::on(__on_passive_function_timer, this);
+		}
+
+		passive_function_timer& operator=(const passive_function_timer& _other) noexcept 
+		{
+			if (this != &_other) {
+				passive_timer::operator=(_other);
+				fn_ = _other.fn_;
+				passive_timer::on(__on_passive_function_timer, this);
+			}
+			return *this;
+		}
+
+		passive_function_timer& operator=(passive_function_timer&& _other) noexcept 
+		{
+			if (this != &_other) {
+				passive_timer::operator=(std::move(_other));
+				fn_ = std::move(_other.fn_);
+				passive_timer::on(__on_passive_function_timer, this);
+			}
+			return *this;
+		}
+
 		inline void on(const std::function<bool(passive_function_timer*)>& _fn)
 		{
 			fn_ = _fn;
@@ -242,6 +287,45 @@ namespace chrono {
 		std::function<bool(passive_function_timer*)> fn_;
 	}; 
 
+	//! @brief Timer interval calculator (Intervalometer) - Based on Cron-aligned mode.
+	//! 
+	//! This class calculates the wait time (in milliseconds) required for the next timer trigger.
+	//! It adopts a "natural time alignment (Cron-style)" strategy, prioritizing strict alignment 
+	//! with real-world wall-clock boundaries (top of the minute, hour, or day) rather than 
+	//! a simple "current time + absolute interval" approach.
+	//! 
+	//! [Core Alignment Rules (Anchor & Range)]
+	//! The system automatically selects the alignment anchor and range based on the configured 
+	//! interval (sec_interval_):
+	//!   1. Interval > 1 hour   : Anchored to the "natural day (00:00:00)" with a 24-hour range.
+	//!   2. Interval > 1 minute : Anchored to the "natural hour (XX:00:00)" with a 1-hour range.
+	//!   3. Interval <= 1 minute: Anchored to the "natural minute (XX:XX:00)" with a 1-minute range.
+	//! 
+	//! @note [Boundary Truncation Feature]
+	//! When the configured interval cannot evenly divide its range (e.g., a 7-minute interval 
+	//! within a 60-minute range), a "truncation jump" occurs when crossing the range boundary, 
+	//! forcing alignment to the start of the next range. 
+	//! This behavior is identical to Linux Crontab (e.g., `*/7 * * * *`).
+	//! 
+	//! @example Boundary Truncation Example (sec_interval_ = 420 seconds / 7 minutes)
+	//! Assuming a start time of 10:00:00:
+	//!   - 10:00:00 (Hour alignment)
+	//!   - 10:07:00 (7-minute interval)
+	//!   - 10:14:00 (7-minute interval)
+	//!   - ...
+	//!   - 10:49:00 (7-minute interval)
+	//!   - 10:56:00 (7-minute interval)
+	//!   - 11:00:00 (⚠️ Boundary truncation triggered, interval becomes 4 mins, forced alignment to the next hour)
+	//!   - 11:07:00 (7-minute interval resumes)
+	//! 
+	//! @note [Offset Feature]
+	//! Allows adding a fixed offset (sec_offset_) to the aligned anchor points.
+	//! @example Offset Example (sec_interval_ = 300s / 5 mins, sec_offset_ = 60s / 1 min)
+	//! Trigger times will be: 10:01:00 -> 10:06:00 -> 10:11:00 ...
+	//! 
+	//! @note [Debounce Tolerance]
+	//! Internal calculations include a slight tolerance (e.g., 50ms) to prevent "duplicate 
+	//! triggers within the same cycle" caused by the OS timer waking up a few milliseconds early.
 	struct intervalometer : protected passive_timer
 	{
 		typedef bool callback_t(intervalometer*, void*);
@@ -263,6 +347,62 @@ namespace chrono {
 			sec_offset_(0)
 		{}
 
+		intervalometer(const intervalometer& _other) noexcept :
+			passive_timer(_other),
+			intervalometer_cb_(_other.intervalometer_cb_),
+			intervalometer_userdata_(_other.intervalometer_userdata_),
+			is_stop_(_other.is_stop_),
+			sec_interval_(_other.sec_interval_),
+			sec_offset_(_other.sec_offset_)
+		{
+			passive_timer::on(on_intervalometer, this);
+			
+		}
+
+		intervalometer(intervalometer&& _other) noexcept :
+			passive_timer(std::move(_other)),
+			intervalometer_cb_(std::move(_other.intervalometer_cb_)),
+			intervalometer_userdata_(std::move(_other.intervalometer_userdata_)),
+			is_stop_(_other.is_stop_),
+			sec_interval_(_other.sec_interval_),
+			sec_offset_(_other.sec_offset_)
+		{
+			passive_timer::on(on_intervalometer, this);
+			_other.is_stop_ = true;
+			_other.intervalometer_cb_ = nullptr;
+		}
+
+		intervalometer& operator=(const intervalometer& _other) noexcept
+		{
+			if (this != &_other) {
+				passive_timer::operator=(_other);
+				intervalometer_cb_ = _other.intervalometer_cb_;
+				intervalometer_userdata_ = _other.intervalometer_userdata_;
+				is_stop_ = _other.is_stop_;
+				sec_interval_ = _other.sec_interval_;
+				sec_offset_ = _other.sec_offset_;
+				passive_timer::on(on_intervalometer, this);
+			}
+			return *this;
+		}
+
+		intervalometer& operator=(intervalometer&& _other) noexcept
+		{
+			if (this != &_other) {
+				passive_timer::operator=(std::move(_other));
+				intervalometer_cb_ = std::move(_other.intervalometer_cb_);
+				intervalometer_userdata_ = std::move(_other.intervalometer_userdata_);
+				is_stop_ = _other.is_stop_;
+				sec_interval_ = _other.sec_interval_;
+				sec_offset_ = _other.sec_offset_;
+				passive_timer::on(on_intervalometer, this);
+
+				_other.is_stop_ = true;
+				_other.intervalometer_cb_ = nullptr;
+			}
+			return *this;
+		}
+
 		inline void set_repeat(int _sec_interval, int _sec_offset = 0) noexcept
 		{
     		if (_sec_interval < 1)
@@ -271,7 +411,7 @@ namespace chrono {
 			
     		if (_sec_offset < 0)
         		return;
-    		if (_sec_offset >  _sec_interval)
+    		if (_sec_offset >= _sec_interval)
         		_sec_offset %= _sec_interval;
 			sec_offset_ = _sec_offset;
 		}
@@ -318,6 +458,11 @@ namespace chrono {
 			return self->__on_intervalometer();
 		}
 	private:
+	    /**
+		 * @brief Calculates the milliseconds to wait until the next trigger.
+		 * @param _curr The current absolute timestamp (usually in milliseconds).
+		 * @return int The number of milliseconds until the next trigger. Returns -1 if configuration is invalid.
+		 */
 		inline int __calc_next_ms_interval(mgu_timestamp_t _curr) const noexcept
 		{
 			auto sec = std::chrono::seconds(sec_interval_ + sec_offset_);
@@ -345,17 +490,25 @@ namespace chrono {
 			}
 
 			auto cumulative = _curr - start_ts;
+			auto offset_ms = sec_offset_ * 1000;
+			auto interval_ms = sec_interval_ * 1000;
 
-			if (sec_offset_ && cumulative < sec_offset_ * 1000)
-				return int(sec_offset_ * 1000 - cumulative);
+			if (sec_offset_ && cumulative < offset_ms)
+				return int(offset_ms - cumulative);
 
-			auto cumulative_next = cumulative - sec_offset_ * 1000;
-			cumulative_next = ((cumulative_next / (sec_interval_ * 1000)) + 1);
-			cumulative_next =   cumulative_next * (sec_interval_ * 1000) + sec_offset_ * 1000;
+			auto cumulative_next = cumulative - offset_ms;
+			cumulative_next = ((cumulative_next + 50) / interval_ms) + 1;
+			cumulative_next =   cumulative_next * interval_ms + offset_ms;
 			
 			auto range_msec = std::chrono::duration_cast<std::chrono::milliseconds>(range).count();
 			if (cumulative_next >= range_msec)
+			{
+				if (range_msec - cumulative <= 50) {
+					int next_point = (offset_ms > 0) ? offset_ms : interval_ms;
+					return int(range_msec - cumulative + next_point);
+				}
 				return int(range_msec - cumulative);
+			}
 			
 			return int(cumulative_next - cumulative);
 		}
@@ -377,9 +530,106 @@ namespace chrono {
 		callback_t* intervalometer_cb_;
 		void* intervalometer_userdata_;
 		int is_stop_;
+
+		/** 
+		 * @brief The configured trigger interval (in seconds).
+		 * Determines the alignment range (minute-level, hour-level, or day-level).
+		 */
 		int sec_interval_;
+
+		/** 
+		 * @brief The trigger offset (in seconds).
+		 * The number of seconds to delay the trigger after the aligned time point.
+		 */
 		int sec_offset_;
 	};
+
+	inline passive_timer::passive_timer(const passive_timer& _other) noexcept :
+        ticker_(_other.ticker_),
+        isStart_(_other.isStart_),
+        isOnce_(_other.isOnce_),
+        interval_(_other.interval_),
+        count_(_other.count_),
+        lastTs_(_other.lastTs_),
+        userdata_(_other.userdata_),
+        cb_(_other.cb_)
+    {
+        if (isStart_) {
+            auto ticker = ticker_.lock();
+            if (ticker) ticker->accept(this, lastTs_);
+        }
+    }
+
+    inline passive_timer& passive_timer::operator=(const passive_timer& _other) noexcept
+    {
+        if (this != &_other) {
+            cancel();
+
+            ticker_ = _other.ticker_;
+            isStart_ = _other.isStart_;
+            isOnce_ = _other.isOnce_;
+            interval_ = _other.interval_;
+            count_ = _other.count_;
+            lastTs_ = _other.lastTs_;
+            userdata_ = _other.userdata_;
+            cb_ = _other.cb_;
+
+            if (isStart_) {
+                auto ticker = ticker_.lock();
+                if (ticker) ticker->accept(this, lastTs_);
+            }
+        }
+        return *this;
+    }
+
+    inline passive_timer::passive_timer(passive_timer&& _other) noexcept :
+        ticker_(std::move(_other.ticker_)),
+        isStart_(_other.isStart_),
+        isOnce_(_other.isOnce_),
+        interval_(_other.interval_),
+        count_(_other.count_),
+        lastTs_(_other.lastTs_),
+        userdata_(_other.userdata_),
+        cb_(_other.cb_)
+    {
+        if (isStart_) {
+            auto ticker = ticker_.lock();
+            if (ticker) {
+                ticker->remove(&_other);
+                ticker->accept(this, lastTs_);
+            }
+        }
+
+		_other.isStart_ = false;
+        _other.ticker_.reset(); 
+    }
+
+    inline passive_timer& passive_timer::operator=(passive_timer&& _other) noexcept
+    {
+        if (this != &_other) {
+            cancel(); 
+
+            ticker_ = std::move(_other.ticker_);
+            isStart_ = _other.isStart_;
+            isOnce_ = _other.isOnce_;
+            interval_ = _other.interval_;
+            count_ = _other.count_;
+            lastTs_ = _other.lastTs_;
+            userdata_ = _other.userdata_;
+            cb_ = _other.cb_;
+
+            if (isStart_) {
+                auto ticker = ticker_.lock();
+                if (ticker) {
+                    ticker->remove(&_other);
+                    ticker->accept(this, lastTs_);
+                }
+            }
+            _other.isStart_ = false;
+            _other.ticker_.reset();
+        }
+        return *this;
+    }
 
 	inline passive_timer::~passive_timer()
 	{
@@ -437,7 +687,11 @@ namespace chrono {
 			passive_timer* _timer, mgu_timestamp_t _curr) noexcept
 	{
 		if (locked()) {
-			wait_accepts_.push_back(_timer);
+			auto wa_it = std::find(wait_accepts_.begin(), wait_accepts_.end(), _timer);
+			if (wa_it == wait_accepts_.end()) {
+				wait_accepts_.push_back(_timer);
+			}
+			wait_removes_.erase(_timer);
 			return;
 		}
 
@@ -455,7 +709,7 @@ namespace chrono {
 				if (remove_and_iteration(it))
 					continue;
 
-                (*it)->timing_notcall(_curr);
+                // (*it)->timing_notcall(_curr);
 				++it;
 			}
 		}
@@ -477,8 +731,15 @@ namespace chrono {
 	inline bool ticker::wheel_timing(mgu_timestamp_t _curr)
 	{
 		auto ts = _curr;
+		bool hasCall = false;
+		
 		auto accepts_cleanup = megopp::util::scope_cleanup__create([&]
 		{
+            for (auto t : wait_removes_) {
+                remove(t);
+            }
+            wait_removes_.clear();
+
 			if (!wait_accepts_.empty()) {
 				for (auto it = wait_accepts_.begin(); it != wait_accepts_.end(); ++it)
 				{
@@ -488,7 +749,6 @@ namespace chrono {
 			}
 		});
 
-		bool hasCall = false;
         locked_ = true;
 		MEGOPP_UTIL__ON_SCOPE_CLEANUP([&] { locked_ = false; });
 
@@ -502,17 +762,21 @@ namespace chrono {
             {
 				if (remove_and_iteration(it)) 
 				{
-					return true;
+					// The timer callback has been triggered and the timer removed, as per the design, the loop must be interrupted
+					hasCall = true;
+					break;
 				}
 
                 auto backup = *it;
 				it = timers_.erase(it);
 				if (!isDie && !backup->is_once()) 
 				{
-                    wait_accepts_.push_back(backup);
+					auto wa_it = std::find(wait_accepts_.begin(), wait_accepts_.end(), backup);
+					if (wa_it == wait_accepts_.end()) {
+						wait_accepts_.push_back(backup);
+					}
 				}
 
-				std::this_thread::yield();
 				ts = mgu_timestamp_get();
 				hasCall = true;
             }
@@ -521,6 +785,7 @@ namespace chrono {
 			}
         }
 
+		std::this_thread::yield();
 		return hasCall;
 	}
 
