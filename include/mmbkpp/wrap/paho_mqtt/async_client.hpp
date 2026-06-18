@@ -488,12 +488,12 @@ inline mgpp::err uvbasic_client::send_message(const memepp::string& _destination
     _opts.context = this;
     if (create_opts_.raw().MQTTVersion < MQTTVERSION_5)
     {
-        _opts.onSuccess = __on_subscribe_success;
-        _opts.onFailure = __on_subscribe_failure;
+        _opts.onSuccess = __on_publish_success;
+        _opts.onFailure = __on_publish_failure;
     }
     else {
-        _opts.onSuccess5 = __on_subscribe_success5;
-        _opts.onFailure5 = __on_subscribe_failure5;
+        _opts.onSuccess5 = __on_publish_success5;
+        _opts.onFailure5 = __on_publish_failure5;
     }
 
     std::unique_lock<std::mutex> locker(mtx_);
@@ -544,12 +544,12 @@ inline mgpp::err uvbasic_client::unsubscribe(const memepp::string& _topic, MQTTA
     _opts.context = this;
     if (create_opts_.raw().MQTTVersion < MQTTVERSION_5)
     {
-        _opts.onSuccess = __on_subscribe_success;
-        _opts.onFailure = __on_subscribe_failure;
+        _opts.onSuccess = __on_unsubscribe_success;
+        _opts.onFailure = __on_unsubscribe_failure;
     }
     else {
-        _opts.onSuccess5 = __on_subscribe_success5;
-        _opts.onFailure5 = __on_subscribe_failure5;
+        _opts.onSuccess5 = __on_unsubscribe_success5;
+        _opts.onFailure5 = __on_unsubscribe_failure5;
     }
         
     std::unique_lock locker(mtx_);
