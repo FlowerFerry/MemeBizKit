@@ -326,6 +326,7 @@ protected:
     
     std::atomic_bool auto_reconn_hdl_running_ = false;
     std::atomic_bool wait_conn_restored_ = false;
+    std::atomic_bool disconnect_requested_ = false;
     connect_status   connect_status_;
 
     message_arrived_callback message_arrived_cb_;
@@ -426,6 +427,7 @@ inline mgpp::err uvbasic_client::set_conn_opts(const connect_options& _opts)
 
 inline mgpp::err uvbasic_client::set_disconn_opts(const disconnect_options& _opts)
 {
+    std::unique_lock<std::mutex> locker(mtx_);
     disconn_opts_.assign(_opts);
     return {};
 }
@@ -437,6 +439,9 @@ inline mgpp::err uvbasic_client::connect()
         return mgpp::err{ MGEC__INVALID_HANDLE, "invalid handle" };
     if (!native_cli_)
         return mgpp::err{ MGEC__INVALID_HANDLE, "invalid handle" };
+
+    if (disconnect_requested_.load(std::memory_order_acquire))
+        return mgpp::err{ MGEC__INPROGRESS, "a disconnect is in progress, retry later" };
 
     if (MQTTAsync_isConnected(native_cli_))
         return {};
@@ -478,9 +483,53 @@ inline mgpp::err uvbasic_client::connect()
 
 inline mgpp::err uvbasic_client::disconnect()
 {
-    wait_conn_restored_ = false;
-    
-    return {};
+    // Phase 1: Set the flag first — all async callbacks check this to change their behaviour
+    disconnect_requested_.store(true, std::memory_order_release);
+    wait_conn_restored_.store(false, std::memory_order_release);
+
+    // Phase 2: Synchronously stop the wrapper-layer retry timer so no new connect fires
+    if (__auto_reconn_hdl_running_st())
+    {
+        std::unique_lock<std::mutex> locker(mtx_);
+        if (retry_connect_timer_)
+        {
+            uv_timer_stop(retry_connect_timer_.get());
+        }
+        __set_auto_reconn_hdl_running_st(false);
+        locker.unlock();
+    }
+
+    // Phase 3: Route based on current connection state
+    int cur = connect_status_.value.load(std::memory_order_acquire);
+
+    if (cur == connect_status::disconnected)
+    {
+        // Idempotent — already disconnected
+        disconnect_requested_.store(false, std::memory_order_release);
+        return {};
+    }
+
+    if (cur == connect_status::disconnecting)
+    {
+        // Already in progress
+        return mgpp::err{ MGEC__ALREADY, "disconnect already in progress" };
+    }
+
+    if (cur == connect_status::connecting)
+    {
+        // Paho's MQTTAsync_disconnect returns MQTTASYNC_DISCONNECTED when !connected,
+        // but it does NOT cancel the in-flight connect.  We just set the flag;
+        // on_connect_success / on_connect_failure will handle the remainder.
+        if (log_lvl_ <= log_level::trace)
+            _log(log_level::trace,
+                "uvbasic_client({})::disconnect while connecting — waiting for connect callback",
+                create_opts_.client_id());
+        return {};
+    }
+
+    // cur == connect_status::connected
+    connect_status_.value.store(connect_status::disconnecting, std::memory_order_release);
+    return __disconnect_mt();
 }
 
 inline mgpp::err uvbasic_client::send_message(const memepp::string& _destination_name, const MQTTAsync_message& _msg, MQTTAsync_responseOptions& _opts)
@@ -949,9 +998,26 @@ inline void uvbasic_client::on_connect_lost(char* _cause)
     if (log_lvl_ <= log_level::trace)
         _log(log_level::trace, "uvbasic_client({})::on_connect_lost",
             create_opts_.client_id());
-    
+
+    if (disconnect_requested_.load(std::memory_order_acquire))
+    {
+        // User requested disconnect; don't start reconnect, just notify
+        if (connect_lost_cb_)
+            connect_lost_cb_(weak_from_this(), _cause);
+        return;
+    }
+
     if (conn_opts_.raw().automaticReconnect != 0)
-        wait_conn_restored_ = true;
+    {
+        wait_conn_restored_.store(true, std::memory_order_release);
+        // Paho's startConnectRetry handles the actual reconnection;
+        // shouldBeConnected is still 1 since user didn't call MQTTAsync_disconnect.
+    }
+    else
+    {
+        // No auto-reconnect — must update the state machine
+        connect_status_.value.store(connect_status::disconnected, std::memory_order_release);
+    }
 
     if (connect_lost_cb_)
         connect_lost_cb_(weak_from_this(), _cause);
@@ -963,11 +1029,19 @@ inline void uvbasic_client::on_connected(char* _cause)
         _log(log_level::trace, "uvbasic_client({})::on_connected",
             create_opts_.client_id());
 
-    if (wait_conn_restored_) {
-        wait_conn_restored_ = false;
+    if (disconnect_requested_.load(std::memory_order_acquire))
+    {
+        // User called disconnect() while auto-reconnect was in progress;
+        // we've just reconnected — disconnect immediately.
+        MQTTAsync_disconnect(native_cli_, &disconn_opts_.raw());
+        return;
+    }
+
+    if (wait_conn_restored_.load(std::memory_order_acquire)) {
+        wait_conn_restored_.store(false, std::memory_order_release);
 
         if (connect_status_.value == connect_status::connecting)
-            connect_status_.value =  connect_status::connected;
+            connect_status_.value.store(connect_status::connected, std::memory_order_release);
         
         if (log_lvl_ <= log_level::trace)
             _log(log_level::trace, "uvbasic_client({})::on_reconnected",
@@ -975,7 +1049,6 @@ inline void uvbasic_client::on_connected(char* _cause)
         
         if (reconnected_cb_)
             reconnected_cb_(weak_from_this());
-        
     }
 
     if (connected_cb_)
@@ -987,7 +1060,26 @@ inline void uvbasic_client::on_disconnected(MQTTProperties* _response, enum MQTT
     if (log_lvl_ <= log_level::trace)
         _log(log_level::trace, "uvbasic_client({})::on_disconnected: reason={}",
             create_opts_.client_id(), static_cast<int>(_reason));
-        
+
+    // Paho calls this ONLY on server-initiated DISCONNECT (MQTT V5).
+    // It is NOT called for user-initiated disconnect or TCP connection loss.
+
+    if (disconnect_requested_.load(std::memory_order_acquire))
+    {
+        // User-initiated disconnect is in flight; on_disconnect_success will handle
+        // the state transition.  We just notify the user callback here.
+        if (disconnected_cb_)
+            disconnected_cb_(weak_from_this(), _response, _reason);
+        return;
+    }
+
+    // Server-initiated disconnect — must update the state machine
+    connect_status_.value.store(connect_status::disconnected, std::memory_order_release);
+
+    // Note: Paho will subsequently call on_connect_lost (via nextOrClose),
+    // then startConnectRetry if automaticReconnect is enabled and shouldBeConnected is true.
+    // Our on_connect_lost will handle wait_conn_restored_ for the reconnect case.
+
     if (disconnected_cb_)
         disconnected_cb_(weak_from_this(), _response, _reason);
 }
@@ -1062,8 +1154,17 @@ inline void uvbasic_client::on_connect_success(MQTTAsync_successData* _response)
     if (log_lvl_ <= log_level::trace)
         _log(log_level::trace, "uvbasic_client({})::on_connect_success",
             create_opts_.client_id());
-    
-    connect_status_.value = connect_status::connected;
+
+    if (disconnect_requested_.load(std::memory_order_acquire))
+    {
+        // User called disconnect() while connecting; we've just connected — disconnect now.
+        connect_status_.value.store(connect_status::disconnecting, std::memory_order_release);
+        MQTTAsync_disconnect(native_cli_, &disconn_opts_.raw());
+        // Don't call connect_success_cb_ — the user expects a disconnect result
+        return;
+    }
+
+    connect_status_.value.store(connect_status::connected, std::memory_order_release);
 
     if (connect_success_cb_)
         connect_success_cb_(weak_from_this(), MQTTVERSION_DEFAULT, _response);
@@ -1075,11 +1176,20 @@ inline void uvbasic_client::on_connect_failure(MQTTAsync_failureData* _response)
         _log(log_level::trace, "uvbasic_client({})::on_connect_failure",
             create_opts_.client_id());
 
+    if (disconnect_requested_.load(std::memory_order_acquire))
+    {
+        // User called disconnect() while connecting; connect failed — end cleanly.
+        connect_status_.value.store(connect_status::disconnected, std::memory_order_release);
+        disconnect_requested_.store(false, std::memory_order_release);
+        // Don't call connect_failure_cb_ — the user expects a disconnect result
+        return;
+    }
+
     if (conn_opts_.raw().automaticReconnect != 0)
     {
-        wait_conn_restored_ = true;
+        wait_conn_restored_.store(true, std::memory_order_release);
     }
-    
+
     if (connect_failure_cb_)
         connect_failure_cb_(weak_from_this(), MQTTVERSION_DEFAULT, _response);
 }
@@ -1090,9 +1200,15 @@ inline void uvbasic_client::on_connect_success5(MQTTAsync_successData5* _respons
         _log(log_level::trace, "uvbasic_client({})::on_connect_success5",
             create_opts_.client_id());
 
+    if (disconnect_requested_.load(std::memory_order_acquire))
+    {
+        connect_status_.value.store(connect_status::disconnecting, std::memory_order_release);
+        MQTTAsync_disconnect(native_cli_, &disconn_opts_.raw());
+        return;
+    }
 
-    connect_status_.value = connect_status::connected;
-    
+    connect_status_.value.store(connect_status::connected, std::memory_order_release);
+
     if (connect_success_cb_)
         connect_success_cb_(weak_from_this(), MQTTVERSION_5, _response);
 }
@@ -1103,11 +1219,18 @@ inline void uvbasic_client::on_connect_failure5(MQTTAsync_failureData5* _respons
         _log(log_level::trace, "uvbasic_client({})::on_connect_failure5",
             create_opts_.client_id());
 
+    if (disconnect_requested_.load(std::memory_order_acquire))
+    {
+        connect_status_.value.store(connect_status::disconnected, std::memory_order_release);
+        disconnect_requested_.store(false, std::memory_order_release);
+        return;
+    }
+
     if (conn_opts_.raw().automaticReconnect != 0)
     {
-        wait_conn_restored_ = true;
+        wait_conn_restored_.store(true, std::memory_order_release);
     }
-    
+
     if (connect_failure_cb_)
         connect_failure_cb_(weak_from_this(), MQTTVERSION_5, _response);
 }
@@ -1118,8 +1241,9 @@ inline void uvbasic_client::on_disconnect_success(MQTTAsync_successData* _respon
         _log(log_level::trace, "uvbasic_client({})::on_disconnect_success",
             create_opts_.client_id());
 
-    connect_status_.value = connect_status::disconnected;
-    
+    connect_status_.value.store(connect_status::disconnected, std::memory_order_release);
+    disconnect_requested_.store(false, std::memory_order_release);
+
     if (disconnect_success_cb_)
         disconnect_success_cb_(weak_from_this(), MQTTVERSION_DEFAULT, _response);
 }
@@ -1130,7 +1254,10 @@ inline void uvbasic_client::on_disconnect_failure(MQTTAsync_failureData* _respon
         _log(log_level::trace, "uvbasic_client({})::on_disconnect_failure",
             create_opts_.client_id());
 
-    // TO_DO
+    // Paho currently never calls onFailure for disconnect, but if a future version
+    // does, treat it as disconnected and clean up — don't leave the state stuck.
+    connect_status_.value.store(connect_status::disconnected, std::memory_order_release);
+    disconnect_requested_.store(false, std::memory_order_release);
 
     if (disconnect_failure_cb_)
         disconnect_failure_cb_(weak_from_this(), MQTTVERSION_DEFAULT, _response);
@@ -1142,7 +1269,8 @@ inline void uvbasic_client::on_disconnect_success5(MQTTAsync_successData5* _resp
         _log(log_level::trace, "uvbasic_client({})::on_disconnect_success5",
             create_opts_.client_id());
 
-    connect_status_.value = connect_status::disconnected;
+    connect_status_.value.store(connect_status::disconnected, std::memory_order_release);
+    disconnect_requested_.store(false, std::memory_order_release);
 
     if (disconnect_success_cb_)
         disconnect_success_cb_(weak_from_this(), MQTTVERSION_5, _response);
@@ -1154,7 +1282,10 @@ inline void uvbasic_client::on_disconnect_failure5(MQTTAsync_failureData5* _resp
         _log(log_level::trace, "uvbasic_client({})::on_disconnect_failure5",
             create_opts_.client_id());
 
-    // TO_DO
+    // Paho currently never calls onFailure for disconnect, but if a future version
+    // does, treat it as disconnected and clean up — don't leave the state stuck.
+    connect_status_.value.store(connect_status::disconnected, std::memory_order_release);
+    disconnect_requested_.store(false, std::memory_order_release);
 
     if (disconnect_failure_cb_)
         disconnect_failure_cb_(weak_from_this(), MQTTVERSION_5, _response);
@@ -1406,6 +1537,13 @@ inline void uvbasic_client::on_retry_connect_cancel_close(uv_handle_t* _handle)
 
 inline void uvbasic_client::on_retry_connect_timer_call (uv_timer_t* _handle)
 {
+    if (disconnect_requested_.load(std::memory_order_acquire))
+    {
+        uv_timer_stop(_handle);
+        __set_auto_reconn_hdl_running_st(false);
+        return;
+    }
+
     std::unique_lock<std::mutex> locker(mtx_);
     auto cleanup = megopp::util::scope_cleanup__create([&] 
     {
@@ -1476,14 +1614,17 @@ inline mgpp::err uvbasic_client::__connect_mt()
         return mgpp::err{ MGEC__ALREADY, "already disconnected" };
     locker.unlock();
 
+    if (disconnect_requested_.load(std::memory_order_acquire))
+        return mgpp::err{ MGEC__INPROGRESS, "disconnect in progress" };
+
     if (connect_status_.value != connect_status::disconnected)
-        return mgpp::err{ MGEC__ALREADY, "already connected" };
-    connect_status_.value = connect_status::connecting;
+        return mgpp::err{ MGEC__ALREADY, "already connected or connecting" };
+    connect_status_.value.store(connect_status::connecting, std::memory_order_release);
 
     int rc = 0;
     if ((rc = MQTTAsync_connect(hdl, &conn_opts_.raw())) != MQTTASYNC_SUCCESS)
     {
-        connect_status_.value = connect_status::disconnected;
+        connect_status_.value.store(connect_status::disconnected, std::memory_order_release);
         return mgpp::err{ MGEC__ERR, rc, "'MQTTAsync_connect' function failed" };
     }
 
@@ -1498,14 +1639,14 @@ inline mgpp::err uvbasic_client::__disconnect_mt()
         return mgpp::err{ MGEC__ALREADY, "already disconnected" };
     locker.unlock();
 
-    if (connect_status_.value != connect_status::connected)
+    if (connect_status_.value.load(std::memory_order_acquire) != connect_status::connected)
         return mgpp::err{ MGEC__ALREADY, "already disconnected" };
-    connect_status_.value = connect_status::disconnecting;
+    connect_status_.value.store(connect_status::disconnecting, std::memory_order_release);
 
     int rc = 0;
     if ((rc = MQTTAsync_disconnect(hdl, &disconn_opts_.raw())) != MQTTASYNC_SUCCESS)
     {
-        connect_status_.value = connect_status::connected;
+        connect_status_.value.store(connect_status::connected, std::memory_order_release);
         return mgpp::err{ MGEC__ERR, rc, "'MQTTAsync_disconnect' function failed" };
     }
 
