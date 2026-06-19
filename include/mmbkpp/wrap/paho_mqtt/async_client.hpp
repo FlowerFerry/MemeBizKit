@@ -120,6 +120,9 @@ public:
     void set_connect_success_callback(const connect_success_callback& _cb);
     void set_connect_failure_callback(const connect_failure_callback& _cb);
 
+    void set_disconnect_success_callback(const disconnect_success_callback& _cb);
+    void set_disconnect_failure_callback(const disconnect_failure_callback& _cb);
+
     void set_subscribe_success_callback(const subscribe_success_callback& _cb);
     void set_subscribe_failure_callback(const subscribe_failure_callback& _cb);
 
@@ -367,6 +370,8 @@ protected:
     std::unique_ptr<uv_async_t> retry_connect_async_req_;
     std::unique_ptr<uv_async_t> retry_connect_async_cancel_;
     std::unique_ptr<uv_timer_t> retry_connect_timer_;
+
+    std::atomic_int retry_connect_backoff_ms_{1000};
     
 };
 
@@ -449,6 +454,9 @@ inline mgpp::err uvbasic_client::connect()
     if (__auto_reconn_hdl_running_st())
         return mgpp::err{ MGEC__INPROGRESS, "auto reconnect is running" };
     locker.unlock();
+    
+    // Reset backoff for fresh user-initiated connect
+    retry_connect_backoff_ms_.store(1000, std::memory_order_release);
     
     auto e = __connect_mt();
     if ( e ) {
@@ -844,6 +852,34 @@ inline void uvbasic_client::set_connect_failure_callback(const connect_failure_c
     connect_failure_cb_ = _cb;
 }
 
+inline void uvbasic_client::set_disconnect_success_callback(const disconnect_success_callback& _cb)
+{
+    std::unique_lock<std::mutex> locker(mtx_);
+    if (native_cli_) {
+        if (MQTTAsync_isConnected(native_cli_))
+            return;
+    }
+
+    if (__auto_reconn_hdl_running_st())
+        return;
+    locker.unlock();
+    disconnect_success_cb_ = _cb;
+}
+
+inline void uvbasic_client::set_disconnect_failure_callback(const disconnect_failure_callback& _cb)
+{
+    std::unique_lock<std::mutex> locker(mtx_);
+    if (native_cli_) {
+        if (MQTTAsync_isConnected(native_cli_))
+            return;
+    }
+
+    if (__auto_reconn_hdl_running_st())
+        return;
+    locker.unlock();
+    disconnect_failure_cb_ = _cb;
+}
+
 inline void uvbasic_client::set_subscribe_success_callback(const subscribe_success_callback& _cb)
 {
     std::unique_lock<std::mutex> locker(mtx_);
@@ -1011,6 +1047,8 @@ inline void uvbasic_client::on_connect_lost(char* _cause)
         wait_conn_restored_.store(true, std::memory_order_release);
         // Paho's startConnectRetry handles the actual reconnection;
         // shouldBeConnected is still 1 since user didn't call MQTTAsync_disconnect.
+        // Update status to reflect that a reconnect attempt is in progress.
+        connect_status_.value.store(connect_status::connecting, std::memory_order_release);
     }
     else
     {
@@ -1166,6 +1204,9 @@ inline void uvbasic_client::on_connect_success(MQTTAsync_successData* _response)
 
     connect_status_.value.store(connect_status::connected, std::memory_order_release);
 
+    // Reset backoff on successful connection
+    retry_connect_backoff_ms_.store(1000, std::memory_order_release);
+
     if (connect_success_cb_)
         connect_success_cb_(weak_from_this(), MQTTVERSION_DEFAULT, _response);
 }
@@ -1212,6 +1253,9 @@ inline void uvbasic_client::on_connect_success5(MQTTAsync_successData5* _respons
     }
 
     connect_status_.value.store(connect_status::connected, std::memory_order_release);
+
+    // Reset backoff on successful connection
+    retry_connect_backoff_ms_.store(1000, std::memory_order_release);
 
     if (connect_success_cb_)
         connect_success_cb_(weak_from_this(), MQTTVERSION_5, _response);
@@ -1496,7 +1540,9 @@ inline void uvbasic_client::on_retry_connect_async_call (uv_async_t* _handle)
 {
     if (retry_connect_timer_)
     {
-        uv_timer_start(retry_connect_timer_.get(), __on_retry_connect_timer_call, 1000, 1000);
+        retry_connect_backoff_ms_.store(1000, std::memory_order_release);
+        uv_timer_start(retry_connect_timer_.get(), __on_retry_connect_timer_call,
+            retry_connect_backoff_ms_.load(std::memory_order_acquire), 0);
     }
     else {
         __set_auto_reconn_hdl_running_mt(false);
@@ -1576,9 +1622,15 @@ inline void uvbasic_client::on_retry_connect_timer_call (uv_timer_t* _handle)
     auto e = __connect_mt();
     if (e) {
         cleanup.cancel();
+        // Exponential backoff: double the interval, capped at 16000ms
+        int cur = retry_connect_backoff_ms_.load(std::memory_order_acquire);
+        int next = cur * 2;
+        if (next > 16000) next = 16000;
+        retry_connect_backoff_ms_.store(next, std::memory_order_release);
+        uv_timer_start(_handle, __on_retry_connect_timer_call, next, 0);
         if (log_lvl_ <= log_level::trace)
-            _log(log_level::trace, "uvbasic_client({})::on_retry_connect_timer_call; connect failed; code= {}; desc= {}",
-                create_opts_.client_id(), e.usercode(), e.message());
+            _log(log_level::trace, "uvbasic_client({})::on_retry_connect_timer_call; connect failed; code= {}; desc= {}; next retry in {}ms",
+                create_opts_.client_id(), e.usercode(), e.message(), next);
     }
 }
 
@@ -1617,6 +1669,9 @@ inline void uvbasic_client::on_destroy()
         }
     }
     if (hdl) {
+        // MQTTAsync_destroy internally calls MQTTAsync_closeSession,
+        // which synchronously sends a DISCONNECT packet if connected,
+        // then closes the socket and frees all resources.
         MQTTAsync_destroy(&hdl);
     }
     
