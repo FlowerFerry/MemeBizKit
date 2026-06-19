@@ -17,6 +17,7 @@
 #include <atomic>
 #include <variant>
 #include <functional>
+#include <chrono>
 
 #include <fmt/format.h>
 #include <outcome/result.hpp>
@@ -74,6 +75,10 @@ public:
     using disconnected_callback = std::function<void(const std::weak_ptr<uvbasic_client>&, MQTTProperties*, enum MQTTReasonCodes)>;
     using reconnected_callback  = std::function<void(const std::weak_ptr<uvbasic_client>&)>;
 
+    // Called periodically while Paho is retrying reconnection in the background.
+    // elapsed_sec: seconds since the connection was lost / reconnect attempt started.
+    using reconnect_stalled_callback = std::function<void(const std::weak_ptr<uvbasic_client>&, int64_t elapsed_sec)>;
+
     using update_connect_options_callback = std::function<void(const std::weak_ptr<uvbasic_client>&, MQTTAsync_connectData*)>;
 
     using success_callback = std::function<void(const std::weak_ptr<uvbasic_client>&, int _mqtt_version, const success_data_t&)>;
@@ -111,6 +116,8 @@ public:
     void set_connected_callback(const connected_callback& _cb);
     void set_disconnected_callback(const disconnected_callback& _cb);
     void set_reconnected_callback(const reconnected_callback& _cb);
+    void set_reconnect_stalled_callback(const reconnect_stalled_callback& _cb);
+    void set_health_check_interval(int _seconds);
 
     // void set_update_connect_options_callback(const update_connect_options_callback& _cb);
 
@@ -214,6 +221,9 @@ protected:
     void on_retry_connect_timer_call (uv_timer_t * _handle);
     void on_retry_connect_timer_close(uv_handle_t* _handle);
 
+    void on_health_check_timer_call (uv_timer_t * _handle);
+    void on_health_check_timer_close(uv_handle_t* _handle);
+
     void on_destroy();
     
     mgpp::err __connect_mt();
@@ -299,6 +309,9 @@ public:
     static void __on_retry_connect_timer_call (uv_timer_t * _handle);
     static void __on_retry_connect_timer_close(uv_handle_t* _handle);
 
+    static void __on_health_check_timer_call (uv_timer_t * _handle);
+    static void __on_health_check_timer_close(uv_handle_t* _handle);
+
 protected:
     
     template<typename... Args>
@@ -339,6 +352,7 @@ protected:
     connected_callback connected_cb_;
     disconnected_callback disconnected_cb_;
     reconnected_callback reconnected_cb_;
+    reconnect_stalled_callback reconnect_stalled_cb_;
 
     std::shared_ptr<update_connect_options_callback> update_connect_options_cb_;
     
@@ -370,6 +384,10 @@ protected:
     std::unique_ptr<uv_async_t> retry_connect_async_req_;
     std::unique_ptr<uv_async_t> retry_connect_async_cancel_;
     std::unique_ptr<uv_timer_t> retry_connect_timer_;
+
+    std::unique_ptr<uv_timer_t> health_check_timer_;
+    std::chrono::steady_clock::time_point reconnect_start_time_;
+    std::atomic_int health_check_interval_sec_{10};
 
     std::atomic_int retry_connect_backoff_ms_{1000};
     
@@ -506,6 +524,10 @@ inline mgpp::err uvbasic_client::disconnect()
         __set_auto_reconn_hdl_running_st(false);
         locker.unlock();
     }
+
+    // Also stop the health-check timer — user has requested disconnect
+    if (health_check_timer_)
+        uv_timer_stop(health_check_timer_.get());
 
     // Phase 3: Route based on current connection state
     int cur = connect_status_.value.load(std::memory_order_acquire);
@@ -669,7 +691,7 @@ inline mgpp::err uvbasic_client::init(uv_loop_t* _loop)
         return mgpp::err{ MGEC__ERR, rc, "MQTTAsync_setConnectionLostCallback failed" };
     }
     
-    handle_counter_.set_count(nullmtx_, 4);
+    handle_counter_.set_count(nullmtx_, 5);
 
     auto destroy_async_hdl = std::make_unique<uv_async_t>();
     uv_async_init(_loop, destroy_async_hdl.get(), __on_destroy_async_call);
@@ -687,6 +709,10 @@ inline mgpp::err uvbasic_client::init(uv_loop_t* _loop)
     uv_timer_init(_loop, retry_connect_timer.get());
     uv_handle_set_data(reinterpret_cast<uv_handle_t*>(retry_connect_timer.get()), this);
 
+    auto health_check_timer = std::make_unique<uv_timer_t>();
+    uv_timer_init(_loop, health_check_timer.get());
+    uv_handle_set_data(reinterpret_cast<uv_handle_t*>(health_check_timer.get()), this);
+
     locker.lock();
     handle_cleanup.cancel();
     native_cli_ = handle;
@@ -694,6 +720,7 @@ inline mgpp::err uvbasic_client::init(uv_loop_t* _loop)
     retry_connect_async_req_ = std::move(retry_connect_hdl);
     retry_connect_async_cancel_ = std::move(retry_connect_cancel_hdl);
     retry_connect_timer_ = std::move(retry_connect_timer);
+    health_check_timer_ = std::move(health_check_timer);
     self_ = shared_from_this();
     return {};
 }
@@ -802,6 +829,28 @@ inline void uvbasic_client::set_reconnected_callback(const reconnected_callback&
         return;
     locker.unlock();
     reconnected_cb_ = _cb;
+}
+
+inline void uvbasic_client::set_reconnect_stalled_callback(const reconnect_stalled_callback& _cb)
+{
+    std::unique_lock<std::mutex> locker(mtx_);
+    if (native_cli_) {
+        if (MQTTAsync_isConnected(native_cli_))
+            return;
+    }
+    if (__auto_reconn_hdl_running_st())
+        return;
+    locker.unlock();
+    reconnect_stalled_cb_ = _cb;
+}
+
+inline void uvbasic_client::set_health_check_interval(int _seconds)
+{
+    if (_seconds < 1)
+        _seconds = 1;
+    if (_seconds > 3600)
+        _seconds = 3600;
+    health_check_interval_sec_.store(_seconds, std::memory_order_release);
 }
 
 inline void uvbasic_client::set_success_callback(const success_callback& _cb)
@@ -1049,6 +1098,13 @@ inline void uvbasic_client::on_connect_lost(char* _cause)
         // shouldBeConnected is still 1 since user didn't call MQTTAsync_disconnect.
         // Update status to reflect that a reconnect attempt is in progress.
         connect_status_.value.store(connect_status::connecting, std::memory_order_release);
+
+        // Start health-check timer for periodic reconnect-stalled notifications
+        // and MQTTAsync_isConnected polling (Plans B + D).
+        reconnect_start_time_ = std::chrono::steady_clock::now();
+        if (health_check_timer_)
+            uv_timer_start(health_check_timer_.get(), __on_health_check_timer_call,
+                           health_check_interval_sec_.load(std::memory_order_acquire) * 1000, 0);
     }
     else
     {
@@ -1078,7 +1134,11 @@ inline void uvbasic_client::on_connected(char* _cause)
     if (wait_conn_restored_.load(std::memory_order_acquire)) {
         wait_conn_restored_.store(false, std::memory_order_release);
 
-        if (connect_status_.value == connect_status::connecting)
+        // Stop the health-check timer — reconnect has succeeded
+        if (health_check_timer_)
+            uv_timer_stop(health_check_timer_.get());
+
+        if (connect_status_.value.load(std::memory_order_acquire) == connect_status::connecting)
             connect_status_.value.store(connect_status::connected, std::memory_order_release);
         
         if (log_lvl_ <= log_level::trace)
@@ -1197,7 +1257,15 @@ inline void uvbasic_client::on_connect_success(MQTTAsync_successData* _response)
     {
         // User called disconnect() while connecting; we've just connected — disconnect now.
         connect_status_.value.store(connect_status::disconnecting, std::memory_order_release);
-        MQTTAsync_disconnect(native_cli_, &disconn_opts_.raw());
+        // Lock to safely read native_cli_ — this callback runs on Paho's internal thread,
+        // while on_destroy() may concurrently write native_cli_ = nullptr under mtx_.
+        MQTTAsync hdl;
+        {
+            std::unique_lock<std::mutex> locker(mtx_);
+            hdl = native_cli_;
+        }
+        if (hdl)
+            MQTTAsync_disconnect(hdl, &disconn_opts_.raw());
         // Don't call connect_success_cb_ — the user expects a disconnect result
         return;
     }
@@ -1229,6 +1297,13 @@ inline void uvbasic_client::on_connect_failure(MQTTAsync_failureData* _response)
     if (conn_opts_.raw().automaticReconnect != 0)
     {
         wait_conn_restored_.store(true, std::memory_order_release);
+
+        // Start health-check timer for periodic reconnect-stalled notifications
+        // and MQTTAsync_isConnected polling (Plans B + D).
+        reconnect_start_time_ = std::chrono::steady_clock::now();
+        if (health_check_timer_)
+            uv_timer_start(health_check_timer_.get(), __on_health_check_timer_call,
+                           health_check_interval_sec_.load(std::memory_order_acquire) * 1000, 0);
     }
     else
     {
@@ -1248,7 +1323,15 @@ inline void uvbasic_client::on_connect_success5(MQTTAsync_successData5* _respons
     if (disconnect_requested_.load(std::memory_order_acquire))
     {
         connect_status_.value.store(connect_status::disconnecting, std::memory_order_release);
-        MQTTAsync_disconnect(native_cli_, &disconn_opts_.raw());
+        // Lock to safely read native_cli_ — this callback runs on Paho's internal thread,
+        // while on_destroy() may concurrently write native_cli_ = nullptr under mtx_.
+        MQTTAsync hdl;
+        {
+            std::unique_lock<std::mutex> locker(mtx_);
+            hdl = native_cli_;
+        }
+        if (hdl)
+            MQTTAsync_disconnect(hdl, &disconn_opts_.raw());
         return;
     }
 
@@ -1277,6 +1360,13 @@ inline void uvbasic_client::on_connect_failure5(MQTTAsync_failureData5* _respons
     if (conn_opts_.raw().automaticReconnect != 0)
     {
         wait_conn_restored_.store(true, std::memory_order_release);
+
+        // Start health-check timer for periodic reconnect-stalled notifications
+        // and MQTTAsync_isConnected polling (Plans B + D).
+        reconnect_start_time_ = std::chrono::steady_clock::now();
+        if (health_check_timer_)
+            uv_timer_start(health_check_timer_.get(), __on_health_check_timer_call,
+                           health_check_interval_sec_.load(std::memory_order_acquire) * 1000, 0);
     }
     else
     {
@@ -1498,6 +1588,11 @@ inline void uvbasic_client::on_destroy_async_call(uv_async_t* _handle)
         uv_close(reinterpret_cast<uv_handle_t*>(retry_connect_timer_.get()), __on_retry_connect_timer_close);
     }
 
+    if (health_check_timer_) {
+        uv_timer_stop(health_check_timer_.get());
+        uv_close(reinterpret_cast<uv_handle_t*>(health_check_timer_.get()), __on_health_check_timer_close);
+    }
+
     std::unique_lock<std::mutex> locker(mtx_);
     if (retry_connect_async_req_)
     {
@@ -1649,6 +1744,76 @@ inline void uvbasic_client::on_retry_connect_timer_close(uv_handle_t* _handle)
     handle_counter_.decrement();
 }
 
+inline void uvbasic_client::on_health_check_timer_call(uv_timer_t* _handle)
+{
+    // Stop if a user-requested disconnect is in progress
+    if (disconnect_requested_.load(std::memory_order_acquire))
+    {
+        uv_timer_stop(_handle);
+        return;
+    }
+
+    // Stop if reconnect has already succeeded (on_connected cleared the flag)
+    if (!wait_conn_restored_.load(std::memory_order_acquire))
+    {
+        uv_timer_stop(_handle);
+        return;
+    }
+
+    // Plan D: Periodic health check — detect if Paho reconnected without
+    // the wrapper noticing (e.g. callback race or internal state mismatch).
+    {
+        std::unique_lock<std::mutex> locker(mtx_);
+        if (native_cli_ && MQTTAsync_isConnected(native_cli_))
+        {
+            // Paho says we're connected — fix wrapper state
+            wait_conn_restored_.store(false, std::memory_order_release);
+            if (connect_status_.value.load(std::memory_order_acquire) == connect_status::connecting)
+                connect_status_.value.store(connect_status::connected, std::memory_order_release);
+            uv_timer_stop(_handle);
+            locker.unlock();
+
+            if (log_lvl_ <= log_level::trace)
+                _log(log_level::trace,
+                    "uvbasic_client({})::health_check_timer: detected Paho reconnect, fixing state",
+                    create_opts_.client_id());
+
+            if (reconnected_cb_)
+                reconnected_cb_(weak_from_this());
+            if (connected_cb_)
+                connected_cb_(weak_from_this(), (char*)"health check detected reconnect");
+            return;
+        }
+    }
+
+    // Plan B: Periodic reminder — notify the upper layer about ongoing reconnect
+    if (reconnect_stalled_cb_)
+    {
+        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::steady_clock::now() - reconnect_start_time_).count();
+        reconnect_stalled_cb_(weak_from_this(), elapsed);
+    }
+
+    // Restart for next tick
+    uv_timer_start(_handle, __on_health_check_timer_call,
+                   health_check_interval_sec_.load(std::memory_order_acquire) * 1000, 0);
+}
+
+inline void uvbasic_client::on_health_check_timer_close(uv_handle_t* _handle)
+{
+    if (log_lvl_ <= log_level::trace)
+        _log(log_level::trace, "uvbasic_client({})::on_health_check_timer_close",
+            create_opts_.client_id());
+
+    std::unique_lock<std::mutex> locker(mtx_);
+    health_check_timer_.reset();
+    locker.unlock();
+
+    auto self = self_;
+
+    handle_counter_.decrement(nullmtx_);
+}
+
 inline void uvbasic_client::on_destroy()
 {
     if (log_lvl_ <= log_level::trace)
@@ -1688,7 +1853,7 @@ inline mgpp::err uvbasic_client::__connect_mt()
     if (disconnect_requested_.load(std::memory_order_acquire))
         return mgpp::err{ MGEC__INPROGRESS, "disconnect in progress" };
 
-    if (connect_status_.value != connect_status::disconnected)
+    if (connect_status_.value.load(std::memory_order_acquire) != connect_status::disconnected)
         return mgpp::err{ MGEC__ALREADY, "already connected or connecting" };
     connect_status_.value.store(connect_status::connecting, std::memory_order_release);
 
@@ -1696,6 +1861,12 @@ inline mgpp::err uvbasic_client::__connect_mt()
     if ((rc = MQTTAsync_connect(hdl, &conn_opts_.raw())) != MQTTASYNC_SUCCESS)
     {
         connect_status_.value.store(connect_status::disconnected, std::memory_order_release);
+        // Bug fix: if disconnect() was called while connecting, the flag was set
+        // and the caller of disconnect() returned OK expecting a future callback.
+        // Since MQTTAsync_connect failed synchronously, no async callback will fire,
+        // so we must clear the flag here to prevent permanent deadlock of connect().
+        if (disconnect_requested_.load(std::memory_order_acquire))
+            disconnect_requested_.store(false, std::memory_order_release);
         return mgpp::err{ MGEC__ERR, rc, "'MQTTAsync_connect' function failed" };
     }
 
@@ -1718,6 +1889,11 @@ inline mgpp::err uvbasic_client::__disconnect_mt()
     if ((rc = MQTTAsync_disconnect(hdl, &disconn_opts_.raw())) != MQTTASYNC_SUCCESS)
     {
         connect_status_.value.store(connect_status::connected, std::memory_order_release);
+        // Bug fix: if MQTTAsync_disconnect fails synchronously (e.g. Paho reports
+        // MQTTASYNC_DISCONNECTED because m->c->connected==0), clear the flag so
+        // connect() is not permanently blocked.  The caller can retry disconnect()
+        // or proceed with a new connect().
+        disconnect_requested_.store(false, std::memory_order_release);
         return mgpp::err{ MGEC__ERR, rc, "'MQTTAsync_disconnect' function failed" };
     }
 
@@ -1958,6 +2134,18 @@ inline void uvbasic_client::__on_retry_connect_timer_close(uv_handle_t* _handle)
 {
     auto p = reinterpret_cast<uvbasic_client*>(uv_handle_get_data(_handle));
     p->on_retry_connect_timer_close(_handle);
+}
+
+inline void uvbasic_client::__on_health_check_timer_call(uv_timer_t* _handle)
+{
+    auto p = reinterpret_cast<uvbasic_client*>(uv_handle_get_data(reinterpret_cast<uv_handle_t*>(_handle)));
+    p->on_health_check_timer_call(_handle);
+}
+
+inline void uvbasic_client::__on_health_check_timer_close(uv_handle_t* _handle)
+{
+    auto p = reinterpret_cast<uvbasic_client*>(uv_handle_get_data(_handle));
+    p->on_health_check_timer_close(_handle);
 }
 
 }

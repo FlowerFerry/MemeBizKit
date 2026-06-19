@@ -280,8 +280,19 @@ namespace async {
             if (this == &_conn_opt)
                 return *this;
             server_url_ = _conn_opt.server_url_;
+            server_urls_ = _conn_opt.server_urls_;
             username_ = _conn_opt.username_;
             password_ = _conn_opt.password_;
+            keep_alive_interval_ = _conn_opt.keep_alive_interval_;
+            clean_session_ = _conn_opt.clean_session_;
+            max_inflight_ = _conn_opt.max_inflight_;
+            connect_timeout_ = _conn_opt.connect_timeout_;
+            request_retry_interval_ = _conn_opt.request_retry_interval_;
+            version_ = _conn_opt.version_;
+            auto_reconnect_ = _conn_opt.auto_reconnect_;
+            min_reconnect_interval_ = _conn_opt.min_reconnect_interval_;
+            max_reconnect_interval_ = _conn_opt.max_reconnect_interval_;
+            cleanstart_v5_ = _conn_opt.cleanstart_v5_;
             if (_conn_opt.ssl_opt_)
                 ssl_opt_ = std::make_unique<ssl_options>(*_conn_opt.ssl_opt_);
             else
@@ -923,6 +934,10 @@ namespace async {
     {
         raw_disconn_opt_.timeout = _disconn_opt.timeout();
         raw_disconn_opt_.reasonCode = _disconn_opt.reasonCode_;
+        // Set struct_version to 1 so Paho reads reasonCode for MQTT v5 connections.
+        // Both v3 and v5 disconnectOptions accept struct_version 0 or 1 — the only
+        // behavioural difference is that v5 requires >= 1 to copy reasonCode.
+        raw_disconn_opt_.struct_version = 1;
         return *this;
     }
 
