@@ -164,7 +164,7 @@ public:
         return native_cli_;
     }
     
-    inline bool is_connected() const noexcept { return native_cli_ && MQTTAsync_isConnected(native_cli_); }
+    inline bool is_connected() const noexcept { auto hdl = native_mt(); return hdl && MQTTAsync_isConnected(hdl); }
 
 protected:
     int  on_message_arrived(char* _topic_name, int _topic_len, MQTTAsync_message* _message);
@@ -451,6 +451,13 @@ inline mgpp::err uvbasic_client::set_conn_opts(const connect_options& _opts)
 inline mgpp::err uvbasic_client::set_disconn_opts(const disconnect_options& _opts)
 {
     std::unique_lock<std::mutex> locker(mtx_);
+
+    if (native_cli_ && MQTTAsync_isConnected(native_cli_))
+        return mgpp::err{ MGEC__PERM, "already connected" };
+
+    if (__auto_reconn_hdl_running_st())
+        return mgpp::err{ MGEC__PERM, "auto reconnect is running" };
+
     disconn_opts_.assign(_opts);
     return {};
 }
@@ -513,21 +520,16 @@ inline mgpp::err uvbasic_client::disconnect()
     disconnect_requested_.store(true, std::memory_order_release);
     wait_conn_restored_.store(false, std::memory_order_release);
 
-    // Phase 2: Synchronously stop the wrapper-layer retry timer so no new connect fires
+    // Phase 2: Set the wrapper-layer flag synchronously (atomic, thread-safe),
+    // then signal the event-loop thread to stop timers safely.
+    // Per libuv docs (design.rst), the event loop and handles are NOT thread-safe
+    // except where stated otherwise; uv_async_send is the only API confirmed safe
+    // from any thread.
     if (__auto_reconn_hdl_running_st())
-    {
-        std::unique_lock<std::mutex> locker(mtx_);
-        if (retry_connect_timer_)
-        {
-            uv_timer_stop(retry_connect_timer_.get());
-        }
         __set_auto_reconn_hdl_running_st(false);
-        locker.unlock();
-    }
 
-    // Also stop the health-check timer — user has requested disconnect
-    if (health_check_timer_)
-        uv_timer_stop(health_check_timer_.get());
+    if (retry_connect_async_cancel_)
+        uv_async_send(retry_connect_async_cancel_.get());
 
     // Phase 3: Route based on current connection state
     int cur = connect_status_.value.load(std::memory_order_acquire);
@@ -1265,7 +1267,17 @@ inline void uvbasic_client::on_connect_success(MQTTAsync_successData* _response)
             hdl = native_cli_;
         }
         if (hdl)
-            MQTTAsync_disconnect(hdl, &disconn_opts_.raw());
+        {
+            int rc = MQTTAsync_disconnect(hdl, &disconn_opts_.raw());
+            if (rc != MQTTASYNC_SUCCESS)
+            {
+                // Paho returned a synchronous error (e.g. MQTTASYNC_DISCONNECTED because
+                // m->c->connected==0).  No async callback will fire, so clean up here
+                // to prevent disconnect_requested_ from being stuck forever.
+                connect_status_.value.store(connect_status::disconnected, std::memory_order_release);
+                disconnect_requested_.store(false, std::memory_order_release);
+            }
+        }
         // Don't call connect_success_cb_ — the user expects a disconnect result
         return;
     }
@@ -1331,7 +1343,17 @@ inline void uvbasic_client::on_connect_success5(MQTTAsync_successData5* _respons
             hdl = native_cli_;
         }
         if (hdl)
-            MQTTAsync_disconnect(hdl, &disconn_opts_.raw());
+        {
+            int rc = MQTTAsync_disconnect(hdl, &disconn_opts_.raw());
+            if (rc != MQTTASYNC_SUCCESS)
+            {
+                // Paho returned a synchronous error (e.g. MQTTASYNC_DISCONNECTED because
+                // m->c->connected==0).  No async callback will fire, so clean up here
+                // to prevent disconnect_requested_ from being stuck forever.
+                connect_status_.value.store(connect_status::disconnected, std::memory_order_release);
+                disconnect_requested_.store(false, std::memory_order_release);
+            }
+        }
         return;
     }
 
@@ -1665,7 +1687,13 @@ inline void uvbasic_client::on_retry_connect_cancel_call(uv_async_t* _handle)
         _log(log_level::trace, "uvbasic_client({})::on_retry_connect_cancel_call",
             create_opts_.client_id());
 
-    uv_timer_stop(retry_connect_timer_.get());
+    // Stop both timers on the event-loop thread — uv_timer_stop is not
+    // thread-safe (per libuv design.rst), and this callback runs on the
+    // event-loop thread via uv_async_send from disconnect().
+    if (retry_connect_timer_)
+        uv_timer_stop(retry_connect_timer_.get());
+    if (health_check_timer_)
+        uv_timer_stop(health_check_timer_.get());
     __set_auto_reconn_hdl_running_mt(false);
 }
 
@@ -1741,7 +1769,7 @@ inline void uvbasic_client::on_retry_connect_timer_close(uv_handle_t* _handle)
 
     auto self = self_;
     
-    handle_counter_.decrement();
+    handle_counter_.decrement(nullmtx_);
 }
 
 inline void uvbasic_client::on_health_check_timer_call(uv_timer_t* _handle)
