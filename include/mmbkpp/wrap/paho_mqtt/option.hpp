@@ -847,6 +847,18 @@ namespace async {
         raw().maxRetryInterval = _conn_opt.max_reconnect_interval();
         raw().cleanstart = _conn_opt.cleanstart_v5();
 
+        // Adjust V5 callback pointers for the new MQTT version
+        if (raw().MQTTVersion >= MQTTVERSION_5)
+        {
+            raw().onSuccess5 = success5_cb_backup_;
+            raw().onFailure5 = failure5_cb_backup_;
+        }
+        else
+        {
+            raw().onSuccess5 = nullptr;
+            raw().onFailure5 = nullptr;
+        }
+
         if (_conn_opt.ssl()) {
             if (ssl()) {
                 ssl()->assign(*_conn_opt.ssl());
@@ -910,6 +922,7 @@ namespace async {
     inline disconnect_native_options& disconnect_native_options::assign(const disconnect_options& _disconn_opt)
     {
         raw_disconn_opt_.timeout = _disconn_opt.timeout();
+        raw_disconn_opt_.reasonCode = _disconn_opt.reasonCode_;
         return *this;
     }
 
