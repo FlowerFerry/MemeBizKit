@@ -1,4 +1,17 @@
 ﻿
+/**
+ * @file async_client.hpp
+ * @brief Single-header implementation of mmbkpp::paho_mqtt::async::uvbasic_client.
+ *
+ * Wraps Eclipse Paho MQTT C asynchronous client (MQTTAsync_* API) with:
+ * - libuv event-loop integration (timers, async handles)
+ * - Thread-safe connection state machine
+ * - Dual-layer automatic reconnection (Paho built-in + wrapper retry timer)
+ * - Health-check timer for silent-reconnect detection (Plans B + D)
+ *
+ * @see MQTTAsync.h (Paho), uv.h (libuv)
+ */
+
 #ifndef MMBKPP_WRAP_PAHOMQTT_ASYNC_CLIENT_H_INCLUDED
 #define MMBKPP_WRAP_PAHOMQTT_ASYNC_CLIENT_H_INCLUDED
 
@@ -28,6 +41,54 @@ namespace outcome = OUTCOME_V2_NAMESPACE;
 namespace mmbkpp {
 namespace paho_mqtt {
 namespace async {
+
+/**
+ * @brief libuv-based asynchronous MQTT client wrapping Eclipse Paho MQTT C library.
+ *
+ * @class uvbasic_client
+ *
+ * Provides a complete MQTT client lifecycle (create, connect, publish/subscribe,
+ * disconnect, destroy) integrated with a libuv event loop.  Manages two layers of
+ * automatic reconnection:
+ * - **Paho built-in automaticReconnect**: controlled via MQTTAsync_connectOptions::
+ *   automaticReconnect.  After a TCP drop or server DISCONNECT, Paho internally
+ *   retries with exponential backoff.
+ * - **Wrapper-level retry timer**: activated when MQTTAsync_connect() fails
+ *   synchronously during the initial connect() call.  Uses a libuv timer with its
+ *   own exponential backoff (1s, 2s, 4s, ..., 16s cap).
+ *
+ * ## Connection state machine
+ *
+ * The client maintains a four-state machine via connect_status::value
+ * (std::atomic_int):
+ *   - disconnected (0)  -- idle, ready to connect.
+ *   - connecting   (1)  -- a connect is in flight (Paho or wrapper timer).
+ *   - connected    (2)  -- TCP/MQTT session established.
+ *   - disconnecting(3)  -- user-requested disconnect in progress.
+ *
+ * ## Key atomic flags
+ *   - disconnect_requested_: set by disconnect(), checked by every async callback
+ *     to alter behaviour.
+ *   - wait_conn_restored_: distinguishes first-connect from reconnection in
+ *     on_connected().
+ *   - auto_reconn_hdl_running_: guards the wrapper-layer retry timer.
+ *
+ * ## Thread safety
+ *   - mtx_ serialises access to native_cli_ and the uv handle unique_ptrs.
+ *   - uv_timer_stop is NOT thread-safe per libuv design.rst.  disconnect() uses
+ *     uv_async_send(cancel_handle) to delegate timer stops to the event-loop thread.
+ *   - Paho callbacks run on Paho internal threads; they capture native_cli_ under
+ *     mtx_ before use to avoid races with on_destroy().
+ *
+ * ## Health check timer (Plans B + D)
+ *   When Paho automaticReconnect is silently retrying (onFailure nulled after first
+ *   call), a periodic uv_timer_t (default 10s) provides:
+ *   - **Plan D**: polls MQTTAsync_isConnected() to detect missed callbacks.
+ *   - **Plan B**: calls reconnect_stalled_cb_ with elapsed seconds for upper-layer
+ *     decisions.
+ *
+ * @see docs/paho_mqtt_async_uvbasic_client_disconnect_flow.md
+ */
 
 class uvbasic_client : public std::enable_shared_from_this<uvbasic_client>
 {
@@ -153,17 +214,62 @@ public:
     mgpp::err subscribe  (const memepp::string& _topic, int _qos, MQTTAsync_responseOptions& _opts);
     mgpp::err unsubscribe(const memepp::string& _topic, MQTTAsync_responseOptions& _opts);
 
+/**
+ * @brief Returns a const reference to the native create options.
+ * @return const create_native_options&
+ */
     inline constexpr const create_native_options& create_opts() const noexcept { return create_opts_; }
+/**
+ * @brief Returns a const reference to the native connect options.
+ *
+ * @warning The raw Paho struct (conn_opts_.raw()) is accessed without mtx_.
+ *          This is safe only as long as set_conn_opts() guards against
+ *          modification while connected or while auto-reconnect is running.
+ * @return const connect_native_options&
+ */
     inline constexpr const connect_native_options& connect_opts() const noexcept { return conn_opts_; }
+/**
+ * @brief Returns a const reference to the native disconnect options.
+ * @warning Same caveat as connect_opts().
+ * @return const disconnect_native_options&
+ */
     inline constexpr const disconnect_native_options& disconnect_opts() const noexcept { return disconn_opts_; }
 
+/**
+ * @brief Returns the raw Paho MQTTAsync handle WITHOUT locking.
+ *
+ * @warning Only use from the event-loop thread or when you can guarantee
+ *          no concurrent on_destroy().  Prefer native_mt() for cross-thread
+ *          access.
+ * @return MQTTAsync -- the native Paho handle, or nullptr if destroyed.
+ */
     inline MQTTAsync native_st() const noexcept { return native_cli_; }
+/**
+ * @brief Returns the raw Paho MQTTAsync handle WITH lock held.
+ *
+ * Holds mtx_ during the read of native_cli_, preventing races with
+ * on_destroy().  The caller receives a copy of the pointer; the Paho
+ * handle itself may still be destroyed asynchronously after the lock
+ * is released.
+ *
+ * @return MQTTAsync -- the native Paho handle, or nullptr if destroyed.
+ * @note Thread-safe.
+ */
     inline MQTTAsync native_mt() const
     {
         std::lock_guard<std::mutex> locker(mtx_);
         return native_cli_;
     }
     
+/**
+ * @brief Queries whether the client is currently connected.
+ *
+ * Uses native_mt() (lock-protected) to safely read native_cli_, then calls
+ * MQTTAsync_isConnected() which internally holds Paho global mutex.
+ *
+ * @return true if native_cli_ is non-null AND Paho reports connected.
+ * @note Thread-safe.
+ */
     inline bool is_connected() const noexcept { auto hdl = native_mt(); return hdl && MQTTAsync_isConnected(hdl); }
 
 protected:
@@ -393,6 +499,20 @@ protected:
     
 };
 
+/**
+ * @brief Private constructor -- use uvbasic_client::create() instead.
+ *
+ * Initialises the connection state to disconnected, wires the Paho callback
+ * pointers (onSuccess/onFailure/onSuccess5/onFailure5) into the connect and
+ * disconnect options structs, and sets up the handle_counter_ to trigger
+ * on_destroy() when all libuv handles have been closed.
+ *
+ * @param _opts  The native create options (client ID, persistence type, MQTT
+ *               version).
+ *
+ * @note The _opts.raw().MQTTVersion is used to initialise conn_opts_ and
+ *       disconn_opts_ with the correct struct_version for MQTT v3 vs v5.
+ */
 uvbasic_client::uvbasic_client(const create_native_options& _opts)
     : native_cli_(nullptr)
     , create_opts_(_opts)
@@ -421,10 +541,32 @@ uvbasic_client::uvbasic_client(const create_native_options& _opts)
 
 }
 
+/**
+ * @brief Destructor -- empty by design.
+ *
+ * All resource cleanup is handled asynchronously through the handle_counter_ /
+ * on_destroy() mechanism.  The destructor itself does nothing because the object
+ * may still have outstanding libuv handles being closed.
+ *
+ * @see destroy_request(), on_destroy()
+ */
 uvbasic_client::~uvbasic_client()
 {
 }
 
+/**
+ * @brief Sets the MQTT connect options.
+ *
+ * Copies the user-provided options into the native Paho struct (conn_opts_).
+ * The copy is performed under mtx_ and guarded against modification while
+ * connected or while the wrapper auto-reconnect timer is running.
+ *
+ * @param _opts  The new connect options.
+ * @return mgpp::err -- OK on success.
+ * @retval MGEC__PERM  Already connected, or auto-reconnect is running.
+ *
+ * @note Thread-safe.
+ */
 inline mgpp::err uvbasic_client::set_conn_opts(const connect_options& _opts)
 {
     std::unique_lock<std::mutex> locker(mtx_);
@@ -448,6 +590,21 @@ inline mgpp::err uvbasic_client::set_conn_opts(const connect_options& _opts)
     return {};
 }
 
+/**
+ * @brief Sets the MQTT disconnect options.
+ *
+ * Copies the user-provided options into the native Paho struct (disconn_opts_).
+ * The copy is performed under mtx_ and guarded against modification while
+ * connected or while the wrapper auto-reconnect timer is running.
+ *
+ * @param _opts  The new disconnect options.
+ * @return mgpp::err -- OK on success.
+ * @retval MGEC__PERM  Already connected, or auto-reconnect is running.
+ *
+ * @note Sets raw_disconn_opt_.struct_version = 1 so that Paho reads reasonCode
+ *       for MQTT v5 connections.
+ * @note Thread-safe.
+ */
 inline mgpp::err uvbasic_client::set_disconn_opts(const disconnect_options& _opts)
 {
     std::unique_lock<std::mutex> locker(mtx_);
@@ -462,6 +619,33 @@ inline mgpp::err uvbasic_client::set_disconn_opts(const disconnect_options& _opt
     return {};
 }
 
+/**
+ * @brief Initiates a connection to the MQTT broker.
+ *
+ * ## Pre-condition checks (under mtx_):
+ *   - destroy_async_req_ must exist (client initialised).
+ *   - native_cli_ must be non-null.
+ *   - disconnect_requested_ must be false (no pending disconnect).
+ *   - MQTTAsync_isConnected() must return false (idempotent).
+ *   - The wrapper retry timer must not be running.
+ *
+ * ## Execution:
+ *   1. Resets retry_connect_backoff_ms_ to 1s.
+ *   2. Calls __connect_mt() which sets connect_status_ = connecting and calls
+ *      MQTTAsync_connect().
+ *   3. If __connect_mt() fails synchronously AND Paho automaticReconnect is
+ *      enabled, starts the wrapper-layer retry timer via uv_async_send.
+ *   4. Returns OK; the actual result arrives asynchronously via
+ *      on_connect_success / on_connect_failure (and on_connected).
+ *
+ * @return mgpp::err -- OK if the connect was initiated, or an error code.
+ * @retval MGEC__INVALID_HANDLE  Client not initialised or destroyed.
+ * @retval MGEC__INPROGRESS      Disconnect in progress, or retry timer running.
+ * @retval MGEC__ALREADY         Already connected.
+ * @retval MGEC__ERR             Paho connect API returned a synchronous error.
+ *
+ * @note Thread-safe: may be called from any thread.
+ */
 inline mgpp::err uvbasic_client::connect()
 {
     std::unique_lock<std::mutex> locker(mtx_);
@@ -485,6 +669,10 @@ inline mgpp::err uvbasic_client::connect()
     
     auto e = __connect_mt();
     if ( e ) {
+        // If disconnect() was called concurrently during __connect_mt(),
+        // the flag is set and we must not start the retry timer.
+        if (disconnect_requested_.load(std::memory_order_acquire))
+            return e;
         if (__auto_reconnect_enable()) 
         {
             locker.lock();
@@ -514,6 +702,42 @@ inline mgpp::err uvbasic_client::connect()
     return {};
 }
 
+/**
+ * @brief Initiates a graceful disconnect from the MQTT broker.
+ *
+ * ## Three-phase design:
+ *
+ * **Phase 1** -- Set flags (atomic, thread-safe):
+ *   - disconnect_requested_ = true  (all async callbacks check this first)
+ *   - wait_conn_restored_ = false   (cancel any in-progress reconnect wait)
+ *
+ * **Phase 2** -- Signal event-loop thread to stop timers:
+ *   - Sets auto_reconn_hdl_running_ = false (atomic).
+ *   - Sends uv_async_send(retry_connect_async_cancel_) so that
+ *     on_retry_connect_cancel_call() (running on the event-loop thread) can
+ *     safely call uv_timer_stop() on both timers.  This is necessary because
+ *     uv_timer_stop() is NOT thread-safe per libuv design document.
+ *
+ * **Phase 3** -- Route by current connect_status_:
+ *   - disconnected:  clear flag, return OK (idempotent).
+ *   - disconnecting: return MGEC__ALREADY (already in progress).
+ *   - connecting:    return OK without calling Paho; wait for the connect
+ *                    callback to handle the disconnect (see on_connect_success).
+ *   - connected:     call __disconnect_mt() to MQTTAsync_disconnect().
+ *
+ * ## Async completion:
+ *   - Normal path:   on_disconnect_success/success5 sets disconnected.
+ *   - Failure path:  on_disconnect_failure/failure5 defensive cleanup (Paho
+ *                    never actually calls onFailure for disconnect currently).
+ *
+ * @return mgpp::err -- OK if the disconnect was initiated or already complete.
+ * @retval MGEC__ALREADY  Disconnect already in progress, or already disconnected.
+ * @retval MGEC__ERR      Paho disconnect API returned a synchronous error.
+ *
+ * @note Thread-safe: may be called from any thread.  The actual uv_timer_stop
+ *       calls are safely delegated to the event-loop thread via uv_async_send.
+ * @note Idempotent when connect_status_ == disconnected.
+ */
 inline mgpp::err uvbasic_client::disconnect()
 {
     // Phase 1: Set the flag first — all async callbacks check this to change their behaviour
@@ -563,6 +787,22 @@ inline mgpp::err uvbasic_client::disconnect()
     return __disconnect_mt();
 }
 
+/**
+ * @brief Publishes a message to the given topic.
+ *
+ * Wires the MQTTAsync_responseOptions callbacks (onSuccess/onFailure or
+ * onSuccess5/onFailure5 depending on MQTT version) and calls
+ * MQTTAsync_sendMessage().
+ *
+ * @param _destination_name  The MQTT topic to publish to.
+ * @param _msg               The MQTT message (payload, QoS, retained flag).
+ * @param _opts              Response options; callbacks will be overwritten.
+ * @return mgpp::err -- OK on success.
+ * @retval MGEC__PERM  Client not created (native_cli_ is null).
+ * @retval MGEC__ERR   MQTTAsync_sendMessage() returned an error.
+ *
+ * @note Thread-safe: captures native_cli_ under mtx_ before the Paho call.
+ */
 inline mgpp::err uvbasic_client::send_message(const memepp::string& _destination_name, const MQTTAsync_message& _msg, MQTTAsync_responseOptions& _opts)
 {
     _opts.context = this;
@@ -591,6 +831,21 @@ inline mgpp::err uvbasic_client::send_message(const memepp::string& _destination
     return {};
 }
 
+/**
+ * @brief Subscribes to a topic with the given QoS.
+ *
+ * Wires the MQTTAsync_responseOptions callbacks and calls MQTTAsync_subscribe().
+ * The result arrives asynchronously via on_subscribe_success/failure.
+ *
+ * @param _topic  The MQTT topic filter to subscribe to.
+ * @param _qos    The requested QoS level (0, 1, or 2).
+ * @param _opts   Response options; callbacks will be overwritten.
+ * @return mgpp::err -- OK on success.
+ * @retval MGEC__PERM  Client not created.
+ * @retval MGEC__ERR   MQTTAsync_subscribe() returned an error.
+ *
+ * @note Thread-safe.
+ */
 inline mgpp::err uvbasic_client::subscribe(const memepp::string& _topic, int _qos, MQTTAsync_responseOptions& _opts)
 {
     _opts.context = this;
@@ -619,6 +874,20 @@ inline mgpp::err uvbasic_client::subscribe(const memepp::string& _topic, int _qo
     return {};
 }
 
+/**
+ * @brief Unsubscribes from a topic.
+ *
+ * Wires the MQTTAsync_responseOptions callbacks and calls MQTTAsync_unsubscribe().
+ * The result arrives asynchronously via on_unsubscribe_success/failure.
+ *
+ * @param _topic  The MQTT topic filter to unsubscribe from.
+ * @param _opts   Response options; callbacks will be overwritten.
+ * @return mgpp::err -- OK on success.
+ * @retval MGEC__PERM  Client not created.
+ * @retval MGEC__ERR   MQTTAsync_unsubscribe() returned an error.
+ *
+ * @note Thread-safe.
+ */
 inline mgpp::err uvbasic_client::unsubscribe(const memepp::string& _topic, MQTTAsync_responseOptions& _opts)
 {
     _opts.context = this;
@@ -647,6 +916,28 @@ inline mgpp::err uvbasic_client::unsubscribe(const memepp::string& _topic, MQTTA
     return {};
 }
 
+/**
+ * @brief Initialises the Paho MQTT handle and all libuv handles.
+ *
+ * Calls MQTTAsync_createWithOptions(), registers Paho callbacks (message arrived,
+ * connected, disconnected, connection lost), and initialises five libuv handles:
+ *   1. destroy_async_req_        -- signals shutdown
+ *   2. retry_connect_async_req_  -- starts the wrapper retry timer
+ *   3. retry_connect_async_cancel_ -- stops timers on the event-loop thread
+ *   4. retry_connect_timer_      -- wrapper-layer retry with exponential backoff
+ *   5. health_check_timer_       -- periodic MQTTAsync_isConnected() polling
+ *
+ * The handle_counter_ is set to 5; each close callback decrements it.
+ * When it reaches 0, on_destroy() is invoked to free the Paho handle.
+ *
+ * @param _loop  The libuv event loop to attach all handles to.
+ * @return       mgpp::err -- OK on success, or an error if any Paho API fails.
+ *
+ * @note Must be called exactly once after construction.  The caller's shared_ptr
+ *       is retained in self_ to keep the object alive during async operations.
+ * @pre  destroy_async_req_ must be nullptr (not yet initialised).
+ * @post native_cli_ is valid; all five libuv handles are initialised and stored.
+ */
 inline mgpp::err uvbasic_client::init(uv_loop_t* _loop)
 {
     if (!_loop)
@@ -727,6 +1018,20 @@ inline mgpp::err uvbasic_client::init(uv_loop_t* _loop)
     return {};
 }
 
+/**
+ * @brief Initiates asynchronous destruction of the client.
+ *
+ * Sends a signal via uv_async_send(destroy_async_req_) to the event-loop thread.
+ * The actual teardown sequence is:
+ *   1. on_destroy_async_call() closes all libuv handles (timers + async handles).
+ *   2. Each close callback calls handle_counter_.decrement().
+ *   3. When the counter reaches 0, on_destroy() calls MQTTAsync_destroy().
+ *
+ * @note MQTTAsync_destroy() internally sends a DISCONNECT packet and closes the
+ *       socket synchronously -- no prior disconnect() call is needed.
+ * @note Thread-safe: may be called from any thread.
+ * @note Idempotent: safe to call multiple times.
+ */
 inline void uvbasic_client::destroy_request()
 {
     std::unique_lock<std::mutex> locker(mtx_);
@@ -735,11 +1040,29 @@ inline void uvbasic_client::destroy_request()
     uv_async_send(destroy_async_req_.get());
 }
 
+/**
+ * @brief Sets the minimum log level for internal logging.
+ *
+ * Log messages below this level are suppressed.  Log output is delivered
+ * via the log_callback (see set_log_callback()).
+ *
+ * @param _level  The minimum log level (see log_level enum).
+ * @note Not guarded -- can be changed at any time.
+ */
 inline void uvbasic_client::set_log_level(log_level _level)
 {
     log_lvl_ = _level;
 }
 
+/**
+ * @brief Sets the log output callback.
+ *
+ * When set, all _log() calls at or above log_lvl_ will invoke this callback
+ * with a weak_ptr to the client, the log level, and the formatted message.
+ *
+ * @param _cb  The log callback.  Pass an empty/default functor to disable logging.
+ * @note **Guarded**: NOT set if connected.
+ */
 inline void uvbasic_client::set_log_callback(const log_callback& _cb)
 {
     std::unique_lock<std::mutex> locker(mtx_);
@@ -751,6 +1074,18 @@ inline void uvbasic_client::set_log_callback(const log_callback& _cb)
     log_cb_ = _cb;
 }
 
+/**
+ * @brief Sets the message-arrived callback.
+ *
+ * The callback receives a weak_ptr to this client as its first argument,
+ * allowing the user to check liveness before accessing the client.
+ *
+ * @note **Guarded**: the callback is NOT set if the client is already connected
+ *       or if the wrapper-layer auto-reconnect timer is running.  This prevents
+ *       mid-session callback changes that could race with Paho internal threads.
+ * @param _cb  The callback functor (std::function).  Pass an empty/default
+ *             functor to clear.
+ */
 inline void uvbasic_client::set_message_arrived_callback(const message_arrived_callback& _cb) 
 {
     std::unique_lock<std::mutex> locker(mtx_);
@@ -764,6 +1099,18 @@ inline void uvbasic_client::set_message_arrived_callback(const message_arrived_c
     message_arrived_cb_ = _cb;
 }
 
+/**
+ * @brief Sets the delivery-complete callback.
+ *
+ * The callback receives a weak_ptr to this client as its first argument,
+ * allowing the user to check liveness before accessing the client.
+ *
+ * @note **Guarded**: the callback is NOT set if the client is already connected
+ *       or if the wrapper-layer auto-reconnect timer is running.  This prevents
+ *       mid-session callback changes that could race with Paho internal threads.
+ * @param _cb  The callback functor (std::function).  Pass an empty/default
+ *             functor to clear.
+ */
 inline void uvbasic_client::set_delivery_complete_callback(const delivery_complete_callback& _cb)
 {
     std::unique_lock<std::mutex> locker(mtx_);
@@ -777,6 +1124,18 @@ inline void uvbasic_client::set_delivery_complete_callback(const delivery_comple
     delivery_complete_cb_ = _cb;
 }
 
+/**
+ * @brief Sets the connection-lost callback.
+ *
+ * The callback receives a weak_ptr to this client as its first argument,
+ * allowing the user to check liveness before accessing the client.
+ *
+ * @note **Guarded**: the callback is NOT set if the client is already connected
+ *       or if the wrapper-layer auto-reconnect timer is running.  This prevents
+ *       mid-session callback changes that could race with Paho internal threads.
+ * @param _cb  The callback functor (std::function).  Pass an empty/default
+ *             functor to clear.
+ */
 inline void uvbasic_client::set_connect_lost_callback(const connect_lost_callback& _cb)
 {
     std::unique_lock<std::mutex> locker(mtx_);
@@ -791,6 +1150,18 @@ inline void uvbasic_client::set_connect_lost_callback(const connect_lost_callbac
     connect_lost_cb_ = _cb;
 }
 
+/**
+ * @brief Sets the connected (on_connected from Paho) callback.
+ *
+ * The callback receives a weak_ptr to this client as its first argument,
+ * allowing the user to check liveness before accessing the client.
+ *
+ * @note **Guarded**: the callback is NOT set if the client is already connected
+ *       or if the wrapper-layer auto-reconnect timer is running.  This prevents
+ *       mid-session callback changes that could race with Paho internal threads.
+ * @param _cb  The callback functor (std::function).  Pass an empty/default
+ *             functor to clear.
+ */
 inline void uvbasic_client::set_connected_callback(const connected_callback& _cb)
 {
     std::unique_lock<std::mutex> locker(mtx_);
@@ -805,6 +1176,18 @@ inline void uvbasic_client::set_connected_callback(const connected_callback& _cb
     connected_cb_ = _cb;
 }
 
+/**
+ * @brief Sets the disconnected (server-initiated DISCONNECT, MQTT v5) callback.
+ *
+ * The callback receives a weak_ptr to this client as its first argument,
+ * allowing the user to check liveness before accessing the client.
+ *
+ * @note **Guarded**: the callback is NOT set if the client is already connected
+ *       or if the wrapper-layer auto-reconnect timer is running.  This prevents
+ *       mid-session callback changes that could race with Paho internal threads.
+ * @param _cb  The callback functor (std::function).  Pass an empty/default
+ *             functor to clear.
+ */
 inline void uvbasic_client::set_disconnected_callback(const disconnected_callback& _cb)
 {
     std::unique_lock<std::mutex> locker(mtx_);
@@ -819,6 +1202,18 @@ inline void uvbasic_client::set_disconnected_callback(const disconnected_callbac
     disconnected_cb_ = _cb;
 }
 
+/**
+ * @brief Sets the reconnected (Paho auto-reconnect succeeded) callback.
+ *
+ * The callback receives a weak_ptr to this client as its first argument,
+ * allowing the user to check liveness before accessing the client.
+ *
+ * @note **Guarded**: the callback is NOT set if the client is already connected
+ *       or if the wrapper-layer auto-reconnect timer is running.  This prevents
+ *       mid-session callback changes that could race with Paho internal threads.
+ * @param _cb  The callback functor (std::function).  Pass an empty/default
+ *             functor to clear.
+ */
 inline void uvbasic_client::set_reconnected_callback(const reconnected_callback& _cb)
 {
     std::unique_lock<std::mutex> locker(mtx_);
@@ -833,6 +1228,18 @@ inline void uvbasic_client::set_reconnected_callback(const reconnected_callback&
     reconnected_cb_ = _cb;
 }
 
+/**
+ * @brief Sets the reconnect-stalled (periodic health-check reports) callback.
+ *
+ * The callback receives a weak_ptr to this client as its first argument,
+ * allowing the user to check liveness before accessing the client.
+ *
+ * @note **Guarded**: the callback is NOT set if the client is already connected
+ *       or if the wrapper-layer auto-reconnect timer is running.  This prevents
+ *       mid-session callback changes that could race with Paho internal threads.
+ * @param _cb  The callback functor (std::function).  Pass an empty/default
+ *             functor to clear.
+ */
 inline void uvbasic_client::set_reconnect_stalled_callback(const reconnect_stalled_callback& _cb)
 {
     std::unique_lock<std::mutex> locker(mtx_);
@@ -846,6 +1253,16 @@ inline void uvbasic_client::set_reconnect_stalled_callback(const reconnect_stall
     reconnect_stalled_cb_ = _cb;
 }
 
+/**
+ * @brief Sets the health-check timer interval.
+ *
+ * Controls how often the health-check timer polls MQTTAsync_isConnected()
+ * and calls reconnect_stalled_cb_ during silent Paho auto-reconnect.
+ *
+ * @param _seconds  Interval in seconds.  Clamped to [1, 3600].  Default: 10.
+ * @note Not guarded -- can be changed while the timer is running.
+ *       The new value takes effect on the next timer tick.
+ */
 inline void uvbasic_client::set_health_check_interval(int _seconds)
 {
     if (_seconds < 1)
@@ -855,6 +1272,15 @@ inline void uvbasic_client::set_health_check_interval(int _seconds)
     health_check_interval_sec_.store(_seconds, std::memory_order_release);
 }
 
+/**
+ * @brief Sets the generic success callback (shared ownership variant).
+ *
+ * Unlike other callbacks stored as plain std::function, this one is stored as
+ * std::shared_ptr<std::function<...>> to allow sharing between multiple observers.
+ *
+ * @note Can be set at any time (no connected/running guards).
+ * @param _cb  The callback functor.
+ */
 inline void uvbasic_client::set_success_callback(const success_callback& _cb)
 {
     std::shared_ptr<success_callback> cb;
@@ -865,6 +1291,11 @@ inline void uvbasic_client::set_success_callback(const success_callback& _cb)
     success_cb_ = cb;
 }
 
+/**
+ * @brief Sets the generic failure callback (shared ownership variant).
+ * @note Can be set at any time (no connected/running guards).
+ * @param _cb  The callback functor.
+ */
 inline void uvbasic_client::set_failure_callback(const failure_callback& _cb)
 {
     std::shared_ptr<failure_callback> cb;
@@ -875,6 +1306,14 @@ inline void uvbasic_client::set_failure_callback(const failure_callback& _cb)
     failure_cb_ = cb;
 }
 
+/**
+ * @brief Sets the connect-success callback.
+ *
+ * The callback receives a weak_ptr to this client as its first argument.
+ *
+ * @note **Guarded**: NOT set if connected or auto-reconnect is running.
+ * @param _cb  The callback functor.
+ */
 inline void uvbasic_client::set_connect_success_callback(const connect_success_callback& _cb)
 {
     std::unique_lock<std::mutex> locker(mtx_);
@@ -889,6 +1328,14 @@ inline void uvbasic_client::set_connect_success_callback(const connect_success_c
     connect_success_cb_ = _cb;
 }
 
+/**
+ * @brief Sets the connect-failure callback.
+ *
+ * The callback receives a weak_ptr to this client as its first argument.
+ *
+ * @note **Guarded**: NOT set if connected or auto-reconnect is running.
+ * @param _cb  The callback functor.
+ */
 inline void uvbasic_client::set_connect_failure_callback(const connect_failure_callback& _cb)
 {
     std::unique_lock<std::mutex> locker(mtx_);
@@ -903,6 +1350,14 @@ inline void uvbasic_client::set_connect_failure_callback(const connect_failure_c
     connect_failure_cb_ = _cb;
 }
 
+/**
+ * @brief Sets the disconnect-success callback.
+ *
+ * The callback receives a weak_ptr to this client as its first argument.
+ *
+ * @note **Guarded**: NOT set if connected or auto-reconnect is running.
+ * @param _cb  The callback functor.
+ */
 inline void uvbasic_client::set_disconnect_success_callback(const disconnect_success_callback& _cb)
 {
     std::unique_lock<std::mutex> locker(mtx_);
@@ -917,6 +1372,14 @@ inline void uvbasic_client::set_disconnect_success_callback(const disconnect_suc
     disconnect_success_cb_ = _cb;
 }
 
+/**
+ * @brief Sets the disconnect-failure callback.
+ *
+ * The callback receives a weak_ptr to this client as its first argument.
+ *
+ * @note **Guarded**: NOT set if connected or auto-reconnect is running.
+ * @param _cb  The callback functor.
+ */
 inline void uvbasic_client::set_disconnect_failure_callback(const disconnect_failure_callback& _cb)
 {
     std::unique_lock<std::mutex> locker(mtx_);
@@ -931,6 +1394,14 @@ inline void uvbasic_client::set_disconnect_failure_callback(const disconnect_fai
     disconnect_failure_cb_ = _cb;
 }
 
+/**
+ * @brief Sets the subscribe-success callback.
+ *
+ * The callback receives a weak_ptr to this client as its first argument.
+ *
+ * @note **Guarded**: NOT set if connected or auto-reconnect is running.
+ * @param _cb  The callback functor.
+ */
 inline void uvbasic_client::set_subscribe_success_callback(const subscribe_success_callback& _cb)
 {
     std::unique_lock<std::mutex> locker(mtx_);
@@ -945,6 +1416,14 @@ inline void uvbasic_client::set_subscribe_success_callback(const subscribe_succe
     subscribe_success_cb_ = _cb;
 }
 
+/**
+ * @brief Sets the subscribe-failure callback.
+ *
+ * The callback receives a weak_ptr to this client as its first argument.
+ *
+ * @note **Guarded**: NOT set if connected or auto-reconnect is running.
+ * @param _cb  The callback functor.
+ */
 inline void uvbasic_client::set_subscribe_failure_callback(const subscribe_failure_callback& _cb)
 {
     std::unique_lock<std::mutex> locker(mtx_);
@@ -959,6 +1438,14 @@ inline void uvbasic_client::set_subscribe_failure_callback(const subscribe_failu
     subscribe_failure_cb_ = _cb;
 }
 
+/**
+ * @brief Sets the unsubscribe-success callback.
+ *
+ * The callback receives a weak_ptr to this client as its first argument.
+ *
+ * @note **Guarded**: NOT set if connected or auto-reconnect is running.
+ * @param _cb  The callback functor.
+ */
 inline void uvbasic_client::set_unsubscribe_success_callback(const unsubscribe_success_callback& _cb)
 {
     std::unique_lock<std::mutex> locker(mtx_);
@@ -973,6 +1460,14 @@ inline void uvbasic_client::set_unsubscribe_success_callback(const unsubscribe_s
     unsubscribe_success_cb_ = _cb;
 }
 
+/**
+ * @brief Sets the unsubscribe-failure callback.
+ *
+ * The callback receives a weak_ptr to this client as its first argument.
+ *
+ * @note **Guarded**: NOT set if connected or auto-reconnect is running.
+ * @param _cb  The callback functor.
+ */
 inline void uvbasic_client::set_unsubscribe_failure_callback(const unsubscribe_failure_callback& _cb)
 {
     std::unique_lock<std::mutex> locker(mtx_);
@@ -987,6 +1482,14 @@ inline void uvbasic_client::set_unsubscribe_failure_callback(const unsubscribe_f
     unsubscribe_failure_cb_ = _cb;
 }
 
+/**
+ * @brief Sets the publish-success callback.
+ *
+ * The callback receives a weak_ptr to this client as its first argument.
+ *
+ * @note **Guarded**: NOT set if connected or auto-reconnect is running.
+ * @param _cb  The callback functor.
+ */
 inline void uvbasic_client::set_publish_success_callback(const publish_success_callback& _cb)
 {
     std::unique_lock<std::mutex> locker(mtx_);
@@ -1002,6 +1505,14 @@ inline void uvbasic_client::set_publish_success_callback(const publish_success_c
     publish_success_cb_ = _cb;
 }
 
+/**
+ * @brief Sets the publish-failure callback.
+ *
+ * The callback receives a weak_ptr to this client as its first argument.
+ *
+ * @note **Guarded**: NOT set if connected or auto-reconnect is running.
+ * @param _cb  The callback functor.
+ */
 inline void uvbasic_client::set_publish_failure_callback(const publish_failure_callback& _cb)
 {
     std::unique_lock<std::mutex> locker(mtx_);
@@ -1017,6 +1528,14 @@ inline void uvbasic_client::set_publish_failure_callback(const publish_failure_c
     publish_failure_cb_ = _cb;
 }
 
+/**
+ * @brief Sets the SSL-error callback.
+ *
+ * The callback receives a weak_ptr to this client as its first argument.
+ *
+ * @note **Guarded**: NOT set if connected or auto-reconnect is running.
+ * @param _cb  The callback functor.
+ */
 inline void uvbasic_client::set_ssl_error_callback(const ssl_error_callback& _cb)
 {
     std::unique_lock<std::mutex> locker(mtx_);
@@ -1032,6 +1551,14 @@ inline void uvbasic_client::set_ssl_error_callback(const ssl_error_callback& _cb
     ssl_error_cb_ = _cb;
 }
 
+/**
+ * @brief Sets the SSL-PSK callback.
+ *
+ * The callback receives a weak_ptr to this client as its first argument.
+ *
+ * @note **Guarded**: NOT set if connected or auto-reconnect is running.
+ * @param _cb  The callback functor.
+ */
 inline void uvbasic_client::set_ssl_psk_callback(const ssl_psk_callback& _cb)
 {
     std::unique_lock<std::mutex> locker(mtx_);
@@ -1047,6 +1574,21 @@ inline void uvbasic_client::set_ssl_psk_callback(const ssl_psk_callback& _cb)
     ssl_psk_cb_ = _cb;
 }
 
+/**
+ * @brief Paho callback: a message has arrived on a subscribed topic.
+ *
+ * Runs on Paho internal receive thread.  Calls the user message_arrived_cb_.
+ * The message and topic memory are owned by Paho and must be freed unless the
+ * callback returns 0 (meaning "I took ownership").
+ *
+ * @param _topic_name  The topic string (Paho-allocated).
+ * @param _topic_len   Length of the topic string.
+ * @param _message     The MQTT message (payload, QoS, etc.).
+ * @return 0 if the callback took ownership of _topic_name and _message
+ *         (they will NOT be freed), or 1 if Paho should free them.
+ *
+ * @note Thread: Paho internal receive thread.
+ */
 inline int uvbasic_client::on_message_arrived(char* _topic_name, int _topic_len, MQTTAsync_message* _message)
 {
     if (log_lvl_ <= log_level::trace)
@@ -1069,6 +1611,12 @@ inline int uvbasic_client::on_message_arrived(char* _topic_name, int _topic_len,
     return 1;
 }
 
+/**
+ * @brief Paho callback: a QoS 1/2 message delivery has completed.
+ *
+ * @param _token  The delivery token assigned when the message was published.
+ * @note Thread: Paho internal thread.
+ */
 inline void uvbasic_client::on_delivery_complete(MQTTAsync_token _token)
 {
     if (log_lvl_ <= log_level::trace)
@@ -1079,6 +1627,27 @@ inline void uvbasic_client::on_delivery_complete(MQTTAsync_token _token)
         delivery_complete_cb_(weak_from_this(), _token);
 }
 
+/**
+ * @brief Paho callback: the TCP/MQTT connection has been lost.
+ *
+ * ## Triggered by:
+ *   - TCP socket error / drop.
+ *   - Server DISCONNECT packet (after on_disconnected, via nextOrClose).
+ *   - Connect timeout (via nextOrClose).
+ *
+ * ## Behavior:
+ *   - If disconnect_requested_ is true: only notifies the user callback,
+ *     does NOT start reconnection.
+ *   - If Paho automaticReconnect is enabled: sets wait_conn_restored_ = true,
+ *     connect_status_ = connecting, and starts the health-check timer.
+ *     Paho startConnectRetry will handle the actual reconnection.
+ *   - If Paho automaticReconnect is disabled: sets connect_status_ = disconnected.
+ *
+ * @param _cause  Human-readable reason string from Paho (may be NULL).
+ * @note Thread: Paho internal thread (via nextOrClose or socket error path).
+ * @note Paho startConnectRetry requires shouldBeConnected == 1, which is true
+ *       unless the user called MQTTAsync_disconnect().
+ */
 inline void uvbasic_client::on_connect_lost(char* _cause)
 {
     if (log_lvl_ <= log_level::trace)
@@ -1118,6 +1687,31 @@ inline void uvbasic_client::on_connect_lost(char* _cause)
         connect_lost_cb_(weak_from_this(), _cause);
 }
 
+/**
+ * @brief Paho callback: the connection has been established (or re-established).
+ *
+ * Always fires AFTER on_connect_success/success5.  Paho passes a reason string:
+ *   - "connect onSuccess called" for first-time connections.
+ *   - "automatic reconnect" for Paho auto-reconnect.
+ *
+ * ## Behavior:
+ *   - If disconnect_requested_ is true: NO-OP -- on_connect_success already
+ *     handled the disconnect path.  This prevents a duplicate
+ *     MQTTAsync_disconnect call.
+ *   - If wait_conn_restored_ is true (reconnect recovery): clears the flag,
+ *     stops the health-check timer, updates connect_status_, and calls
+ *     reconnected_cb_ before connected_cb_.
+ *   - Otherwise (first connect): just calls connected_cb_.
+ *
+ * ## Callback ordering (reconnect):
+ *   connect_success_cb_ -> reconnected_cb_ -> connected_cb_
+ *
+ * ## Callback ordering (first connect):
+ *   connect_success_cb_ -> connected_cb_
+ *
+ * @param _cause  Reason string from Paho.
+ * @note Thread: Paho internal thread (from CONNACK handler).
+ */
 inline void uvbasic_client::on_connected(char* _cause)
 {
     if (log_lvl_ <= log_level::trace)
@@ -1155,6 +1749,25 @@ inline void uvbasic_client::on_connected(char* _cause)
         connected_cb_(weak_from_this(), _cause);
 }
 
+/**
+ * @brief Paho callback: the server sent a DISCONNECT packet (MQTT v5 only).
+ *
+ * ## Triggered ONLY by server-initiated DISCONNECT (MQTT v5).
+ * NOT called for: user disconnect, TCP drop, or connect timeout.
+ *
+ * ## Behavior:
+ *   - If disconnect_requested_ is true: only notifies disconnected_cb_.
+ *     on_disconnect_success will handle state cleanup.
+ *   - Otherwise (server-initiated): sets connect_status_ = disconnected,
+ *     notifies disconnected_cb_.  Paho will subsequently call on_connect_lost
+ *     (via nextOrClose) and may start auto-reconnect.
+ *
+ * @param _response  MQTT v5 properties from the DISCONNECT packet.
+ * @param _reason    MQTT v5 reason code.
+ * @note Thread: Paho internal thread (from packet receive handler).
+ * @note Paho sets connected = 0 BEFORE calling nextOrClose, so subsequent
+ *       on_connect_lost sees was_connected = 0.
+ */
 inline void uvbasic_client::on_disconnected(MQTTProperties* _response, enum MQTTReasonCodes _reason)
 {
     if (log_lvl_ <= log_level::trace)
@@ -1184,6 +1797,14 @@ inline void uvbasic_client::on_disconnected(MQTTProperties* _response, enum MQTT
         disconnected_cb_(weak_from_this(), _response, _reason);
 }
 
+/**
+ * @brief Generic success callback (MQTT v3).
+ *
+ * Forwards to success_cb_ with MQTTVERSION_DEFAULT.  success_cb_ is read
+ * under mtx_ as shared_ptr for safe concurrent access.
+ *
+ * @note Thread: Paho internal thread.
+ */
 inline void uvbasic_client::on_success(MQTTAsync_successData* _response)
 {
     if (log_lvl_ <= log_level::trace)
@@ -1200,6 +1821,10 @@ inline void uvbasic_client::on_success(MQTTAsync_successData* _response)
     (*cb)(weak_from_this(), MQTTVERSION_DEFAULT, _response);
 }
 
+/**
+ * @brief Generic failure callback (MQTT v3).
+ * @note Thread: Paho internal thread.
+ */
 inline void uvbasic_client::on_failure(MQTTAsync_failureData* _response)
 {
     if (log_lvl_ <= log_level::trace)
@@ -1216,6 +1841,10 @@ inline void uvbasic_client::on_failure(MQTTAsync_failureData* _response)
     (*cb)(weak_from_this(), MQTTVERSION_DEFAULT, _response);
 }
 
+/**
+ * @brief Generic success callback (MQTT v5).
+ * @note Thread: Paho internal thread.
+ */
 inline void uvbasic_client::on_success5(MQTTAsync_successData5* _response)
 {
     if (log_lvl_ <= log_level::trace)
@@ -1232,6 +1861,10 @@ inline void uvbasic_client::on_success5(MQTTAsync_successData5* _response)
     (*cb)(weak_from_this(), MQTTVERSION_5, _response);
 }
 
+/**
+ * @brief Generic failure callback (MQTT v5).
+ * @note Thread: Paho internal thread.
+ */
 inline void uvbasic_client::on_failure5(MQTTAsync_failureData5* _response)
 {
     if (log_lvl_ <= log_level::trace)
@@ -1249,6 +1882,25 @@ inline void uvbasic_client::on_failure5(MQTTAsync_failureData5* _response)
     (*cb)(weak_from_this(), MQTTVERSION_5, _response);
 }
 
+/**
+ * @brief Paho callback: MQTT CONNECT succeeded (MQTT v3).
+ *
+ * ## Disconnect-during-connect path (disconnect_requested_ == true):
+ *   User called disconnect() while connecting.  The connection just succeeded,
+ *   so we immediately call MQTTAsync_disconnect().  native_cli_ is read under
+ *   mtx_ to avoid races with on_destroy().  The return value of
+ *   MQTTAsync_disconnect() is checked: if Paho returns MQTTASYNC_DISCONNECTED
+ *   synchronously (because connected==0), we defensively clear the state flags
+ *   since no async callback will fire.
+ *
+ * ## Normal path:
+ *   Sets connect_status_ = connected, resets the backoff to 1s, and calls
+ *   connect_success_cb_.
+ *
+ * @param _response  Paho success data (server URI, MQTT version, session present).
+ * @note Thread: Paho internal thread (from CONNACK handler).
+ * @note Paho nulls m->connect.onSuccess and m->connect.onFailure after this call.
+ */
 inline void uvbasic_client::on_connect_success(MQTTAsync_successData* _response)
 {
     if (log_lvl_ <= log_level::trace)
@@ -1291,6 +1943,28 @@ inline void uvbasic_client::on_connect_success(MQTTAsync_successData* _response)
         connect_success_cb_(weak_from_this(), MQTTVERSION_DEFAULT, _response);
 }
 
+/**
+ * @brief Paho callback: MQTT CONNECT failed (MQTT v3).
+ *
+ * ## Disconnect-during-connect path (disconnect_requested_ == true):
+ *   User called disconnect() while connecting, and the connect failed.
+ *   Sets connect_status_ = disconnected and clears disconnect_requested_.
+ *   Does NOT call connect_failure_cb_ (the user expects a disconnect result).
+ *
+ * ## Normal path with automaticReconnect:
+ *   Sets wait_conn_restored_ = true and starts the health-check timer.
+ *   Paho startConnectRetry handles the retry internally.
+ *   connect_status_ stays at connecting (already set by __connect_mt()).
+ *
+ * ## Normal path without automaticReconnect:
+ *   Sets connect_status_ = disconnected.  User must call connect() manually.
+ *
+ * @param _response  Paho failure data (error code, message).
+ * @note Thread: Paho internal thread (from nextOrClose or CONNACK error path).
+ * @note Paho calls this at most TWICE: once for the initial connect failure,
+ *       and once for the first auto-reconnect failure via nextOrClose.
+ *       After that, m->connect.onFailure is NULL and failures are silent.
+ */
 inline void uvbasic_client::on_connect_failure(MQTTAsync_failureData* _response)
 {
     if (log_lvl_ <= log_level::trace)
@@ -1326,6 +2000,15 @@ inline void uvbasic_client::on_connect_failure(MQTTAsync_failureData* _response)
         connect_failure_cb_(weak_from_this(), MQTTVERSION_DEFAULT, _response);
 }
 
+/**
+ * @brief Paho callback: MQTT CONNECT succeeded (MQTT v5).
+ *
+ * Identical logic to on_connect_success() but forwards MQTTVERSION_5
+ * in the callback.
+ *
+ * @param _response  Paho v5 success data (includes properties, reason code).
+ * @note Thread: Paho internal thread.
+ */
 inline void uvbasic_client::on_connect_success5(MQTTAsync_successData5* _response)
 {
     if (log_lvl_ <= log_level::trace)
@@ -1366,6 +2049,15 @@ inline void uvbasic_client::on_connect_success5(MQTTAsync_successData5* _respons
         connect_success_cb_(weak_from_this(), MQTTVERSION_5, _response);
 }
 
+/**
+ * @brief Paho callback: MQTT CONNECT failed (MQTT v5).
+ *
+ * Identical logic to on_connect_failure() but forwards MQTTVERSION_5
+ * in the callback.
+ *
+ * @param _response  Paho v5 failure data.
+ * @note Thread: Paho internal thread.
+ */
 inline void uvbasic_client::on_connect_failure5(MQTTAsync_failureData5* _response)
 {
     if (log_lvl_ <= log_level::trace)
@@ -1399,6 +2091,16 @@ inline void uvbasic_client::on_connect_failure5(MQTTAsync_failureData5* _respons
         connect_failure_cb_(weak_from_this(), MQTTVERSION_5, _response);
 }
 
+/**
+ * @brief Paho callback: user-initiated disconnect completed (MQTT v3).
+ *
+ * Sets connect_status_ = disconnected, clears disconnect_requested_,
+ * and calls disconnect_success_cb_.
+ *
+ * @param _response  Paho success data.
+ * @note Thread: Paho internal thread (from checkDisconnect).
+ * @note This is the terminal state for a normal user disconnect.
+ */
 inline void uvbasic_client::on_disconnect_success(MQTTAsync_successData* _response)
 {
     if (log_lvl_ <= log_level::trace)
@@ -1412,6 +2114,17 @@ inline void uvbasic_client::on_disconnect_success(MQTTAsync_successData* _respon
         disconnect_success_cb_(weak_from_this(), MQTTVERSION_DEFAULT, _response);
 }
 
+/**
+ * @brief Paho callback: user-initiated disconnect failed (MQTT v3).
+ *
+ * Paho currently NEVER calls onFailure for disconnect (checkDisconnect only
+ * calls onSuccess/onSuccess5).  This handler exists as defensive code: if a
+ * future Paho version adds the failure path, we clean up state rather than
+ * leaving disconnect_requested_ stuck and connect_status_ at disconnecting.
+ *
+ * @param _response  Paho failure data.
+ * @note Thread: Paho internal thread (currently never invoked).
+ */
 inline void uvbasic_client::on_disconnect_failure(MQTTAsync_failureData* _response)
 {
     if (log_lvl_ <= log_level::trace)
@@ -1427,6 +2140,10 @@ inline void uvbasic_client::on_disconnect_failure(MQTTAsync_failureData* _respon
         disconnect_failure_cb_(weak_from_this(), MQTTVERSION_DEFAULT, _response);
 }
 
+/**
+ * @brief Paho callback: user-initiated disconnect completed (MQTT v5).
+ * @note Thread: Paho internal thread.
+ */
 inline void uvbasic_client::on_disconnect_success5(MQTTAsync_successData5* _response)
 {
     if (log_lvl_ <= log_level::trace)
@@ -1440,6 +2157,11 @@ inline void uvbasic_client::on_disconnect_success5(MQTTAsync_successData5* _resp
         disconnect_success_cb_(weak_from_this(), MQTTVERSION_5, _response);
 }
 
+/**
+ * @brief Paho callback: user-initiated disconnect failed (MQTT v5).
+ * Defensive handler -- Paho never calls this in current versions.
+ * @note Thread: Paho internal thread.
+ */
 inline void uvbasic_client::on_disconnect_failure5(MQTTAsync_failureData5* _response)
 {
     if (log_lvl_ <= log_level::trace)
@@ -1455,6 +2177,14 @@ inline void uvbasic_client::on_disconnect_failure5(MQTTAsync_failureData5* _resp
         disconnect_failure_cb_(weak_from_this(), MQTTVERSION_5, _response);
 }
 
+/**
+ * @brief Paho callback: subscribe succeeded (MQTT v3).
+ *
+ * Forwards to the corresponding user callback.
+ *
+ * @param _response  Paho operation result data.
+ * @note Thread: Paho internal thread.
+ */
 inline void uvbasic_client::on_subscribe_success(MQTTAsync_successData* _response)
 {
     if (log_lvl_ <= log_level::trace)
@@ -1465,6 +2195,14 @@ inline void uvbasic_client::on_subscribe_success(MQTTAsync_successData* _respons
         subscribe_success_cb_(weak_from_this(), MQTTVERSION_DEFAULT, _response);
 }
 
+/**
+ * @brief Paho callback: subscribe failed (MQTT v3).
+ *
+ * Forwards to the corresponding user callback.
+ *
+ * @param _response  Paho operation result data.
+ * @note Thread: Paho internal thread.
+ */
 inline void uvbasic_client::on_subscribe_failure(MQTTAsync_failureData* _response)
 {
     if (log_lvl_ <= log_level::trace)
@@ -1475,6 +2213,14 @@ inline void uvbasic_client::on_subscribe_failure(MQTTAsync_failureData* _respons
         subscribe_failure_cb_(weak_from_this(), MQTTVERSION_DEFAULT, _response);
 }
 
+/**
+ * @brief Paho callback: subscribe succeeded (MQTT v5).
+ *
+ * Forwards to the corresponding user callback.
+ *
+ * @param _response  Paho operation result data.
+ * @note Thread: Paho internal thread.
+ */
 inline void uvbasic_client::on_subscribe_success5(MQTTAsync_successData5* _response)
 {
     if (log_lvl_ <= log_level::trace)
@@ -1485,6 +2231,14 @@ inline void uvbasic_client::on_subscribe_success5(MQTTAsync_successData5* _respo
         subscribe_success_cb_(weak_from_this(), MQTTVERSION_5, _response);
 }
 
+/**
+ * @brief Paho callback: subscribe failed (MQTT v5).
+ *
+ * Forwards to the corresponding user callback.
+ *
+ * @param _response  Paho operation result data.
+ * @note Thread: Paho internal thread.
+ */
 inline void uvbasic_client::on_subscribe_failure5(MQTTAsync_failureData5* _response)
 {
     if (log_lvl_ <= log_level::trace)
@@ -1495,6 +2249,14 @@ inline void uvbasic_client::on_subscribe_failure5(MQTTAsync_failureData5* _respo
         subscribe_failure_cb_(weak_from_this(), MQTTVERSION_5, _response);
 }
 
+/**
+ * @brief Paho callback: unsubscribe succeeded (MQTT v3).
+ *
+ * Forwards to the corresponding user callback.
+ *
+ * @param _response  Paho operation result data.
+ * @note Thread: Paho internal thread.
+ */
 inline void uvbasic_client::on_unsubscribe_success(MQTTAsync_successData* _response)
 {
     if (log_lvl_ <= log_level::trace)
@@ -1505,6 +2267,14 @@ inline void uvbasic_client::on_unsubscribe_success(MQTTAsync_successData* _respo
         unsubscribe_success_cb_(weak_from_this(), MQTTVERSION_DEFAULT, _response);
 }
 
+/**
+ * @brief Paho callback: unsubscribe failed (MQTT v3).
+ *
+ * Forwards to the corresponding user callback.
+ *
+ * @param _response  Paho operation result data.
+ * @note Thread: Paho internal thread.
+ */
 inline void uvbasic_client::on_unsubscribe_failure(MQTTAsync_failureData* _response)
 {
     if (log_lvl_ <= log_level::trace)
@@ -1515,6 +2285,14 @@ inline void uvbasic_client::on_unsubscribe_failure(MQTTAsync_failureData* _respo
         unsubscribe_failure_cb_(weak_from_this(), MQTTVERSION_DEFAULT, _response);
 }
 
+/**
+ * @brief Paho callback: unsubscribe succeeded (MQTT v5).
+ *
+ * Forwards to the corresponding user callback.
+ *
+ * @param _response  Paho operation result data.
+ * @note Thread: Paho internal thread.
+ */
 inline void uvbasic_client::on_unsubscribe_success5(MQTTAsync_successData5* _response)
 {
     if (log_lvl_ <= log_level::trace)
@@ -1525,6 +2303,14 @@ inline void uvbasic_client::on_unsubscribe_success5(MQTTAsync_successData5* _res
         unsubscribe_success_cb_(weak_from_this(), MQTTVERSION_5, _response);
 }
 
+/**
+ * @brief Paho callback: unsubscribe failed (MQTT v5).
+ *
+ * Forwards to the corresponding user callback.
+ *
+ * @param _response  Paho operation result data.
+ * @note Thread: Paho internal thread.
+ */
 inline void uvbasic_client::on_unsubscribe_failure5(MQTTAsync_failureData5* _response)
 {
     if (log_lvl_ <= log_level::trace)
@@ -1535,6 +2321,14 @@ inline void uvbasic_client::on_unsubscribe_failure5(MQTTAsync_failureData5* _res
         unsubscribe_failure_cb_(weak_from_this(), MQTTVERSION_5, _response);
 }
 
+/**
+ * @brief Paho callback: publish succeeded (MQTT v3).
+ *
+ * Forwards to the corresponding user callback.
+ *
+ * @param _response  Paho operation result data.
+ * @note Thread: Paho internal thread.
+ */
 inline void uvbasic_client::on_publish_success(MQTTAsync_successData* _response)
 {
     if (log_lvl_ <= log_level::trace)
@@ -1545,6 +2339,14 @@ inline void uvbasic_client::on_publish_success(MQTTAsync_successData* _response)
         publish_success_cb_(weak_from_this(), MQTTVERSION_DEFAULT, _response);
 }
 
+/**
+ * @brief Paho callback: publish failed (MQTT v3).
+ *
+ * Forwards to the corresponding user callback.
+ *
+ * @param _response  Paho operation result data.
+ * @note Thread: Paho internal thread.
+ */
 inline void uvbasic_client::on_publish_failure(MQTTAsync_failureData* _response)
 {
     if (log_lvl_ <= log_level::trace)
@@ -1555,6 +2357,14 @@ inline void uvbasic_client::on_publish_failure(MQTTAsync_failureData* _response)
         publish_failure_cb_(weak_from_this(), MQTTVERSION_DEFAULT, _response);
 }
 
+/**
+ * @brief Paho callback: publish succeeded (MQTT v5).
+ *
+ * Forwards to the corresponding user callback.
+ *
+ * @param _response  Paho operation result data.
+ * @note Thread: Paho internal thread.
+ */
 inline void uvbasic_client::on_publish_success5(MQTTAsync_successData5* _response)
 {
     if (log_lvl_ <= log_level::trace)
@@ -1565,6 +2375,14 @@ inline void uvbasic_client::on_publish_success5(MQTTAsync_successData5* _respons
         publish_success_cb_(weak_from_this(), MQTTVERSION_5, _response);
 }
 
+/**
+ * @brief Paho callback: publish failed (MQTT v5).
+ *
+ * Forwards to the corresponding user callback.
+ *
+ * @param _response  Paho operation result data.
+ * @note Thread: Paho internal thread.
+ */
 inline void uvbasic_client::on_publish_failure5(MQTTAsync_failureData5* _response)
 {
     if (log_lvl_ <= log_level::trace)
@@ -1575,6 +2393,14 @@ inline void uvbasic_client::on_publish_failure5(MQTTAsync_failureData5* _respons
         publish_failure_cb_(weak_from_this(), MQTTVERSION_5, _response);
 }
 
+/**
+ * @brief Paho callback: SSL certificate verification error.
+ *
+ * @param _str  Error description.
+ * @param _len  Length of the error string.
+ * @return 1 to continue (accept the certificate anyway), 0 to abort.
+ * @note Thread: Paho internal thread (OpenSSL callback context).
+ */
 inline int uvbasic_client::on_ssl_error(const char* _str, size_t _len)
 {
     if (log_lvl_ <= log_level::trace)
@@ -1586,6 +2412,17 @@ inline int uvbasic_client::on_ssl_error(const char* _str, size_t _len)
     return 1;
 }
 
+/**
+ * @brief Paho callback: SSL Pre-Shared Key (PSK) identity and key request.
+ *
+ * @param _hint              PSK hint from the server.
+ * @param _identity          Output buffer for the PSK identity.
+ * @param _max_identity_len  Maximum length of identity.
+ * @param _psk               Output buffer for the PSK key.
+ * @param _max_psk_len       Maximum length of PSK key.
+ * @return The length of the PSK key written, or 0 on error.
+ * @note Thread: Paho internal thread (OpenSSL callback context).
+ */
 inline unsigned int uvbasic_client::on_ssl_psk(const char* _hint, char* _identity, unsigned int _max_identity_len, unsigned char* _psk, unsigned int _max_psk_len)
 {
     if (log_lvl_ <= log_level::trace)
@@ -1597,6 +2434,23 @@ inline unsigned int uvbasic_client::on_ssl_psk(const char* _hint, char* _identit
     return 1;
 }
 
+/**
+ * @brief libuv callback: destroy signal received (event-loop thread).
+ *
+ * Closes all libuv handles in sequence:
+ *   1. Closes the destroy async handle itself (uv_close with callback).
+ *   2. Stops and closes retry_connect_timer_.
+ *   3. Stops and closes health_check_timer_.
+ *   4. Under mtx_: closes retry_connect_async_req_ and retry_connect_async_cancel_.
+ *
+ * Each close callback decrements handle_counter_.  When it reaches 0,
+ * on_destroy() is invoked.
+ *
+ * @param _handle  The destroy async handle.
+ * @note Thread: libuv event-loop thread (via uv_async_send from destroy_request()).
+ * @note Calls uv_close on retry_connect_async_req_ and cancel under mtx_ because
+ *       their close callbacks access mtx_-protected members.
+ */
 inline void uvbasic_client::on_destroy_async_call(uv_async_t* _handle)
 {
     if (log_lvl_ <= log_level::trace)
@@ -1638,6 +2492,15 @@ inline void uvbasic_client::on_destroy_async_call(uv_async_t* _handle)
     //}
 }
 
+/**
+ * @brief libuv callback: destroy async handle has been closed.
+ *
+ * Resets destroy_async_req_ under mtx_, retains self_ to keep the object alive,
+ * and decrements handle_counter_.
+ *
+ * @param _handle  The closed uv handle.
+ * @note Thread: libuv event-loop thread.
+ */
 inline void uvbasic_client::on_destroy_async_close(uv_handle_t* _handle)
 {
     if (log_lvl_ <= log_level::trace)
@@ -1653,6 +2516,16 @@ inline void uvbasic_client::on_destroy_async_close(uv_handle_t* _handle)
     handle_counter_.decrement(nullmtx_);
 }
 
+/**
+ * @brief libuv callback: retry-connect signal received.
+ *
+ * Resets retry_connect_backoff_ms_ to 1s and starts retry_connect_timer_
+ * as a one-shot timer.  If retry_connect_timer_ is null (destroy in progress),
+ * clears auto_reconn_hdl_running_.
+ *
+ * @param _handle  The retry-connect async handle.
+ * @note Thread: libuv event-loop thread (via uv_async_send from connect()).
+ */
 inline void uvbasic_client::on_retry_connect_async_call (uv_async_t* _handle)
 {
     if (retry_connect_timer_)
@@ -1666,6 +2539,10 @@ inline void uvbasic_client::on_retry_connect_async_call (uv_async_t* _handle)
     }
 }
 
+/**
+ * @brief libuv callback: retry-connect async handle closed.
+ * @note Thread: libuv event-loop thread.
+ */
 inline void uvbasic_client::on_retry_connect_async_close(uv_handle_t* _handle)
 {
     if (log_lvl_ <= log_level::trace)
@@ -1681,6 +2558,20 @@ inline void uvbasic_client::on_retry_connect_async_close(uv_handle_t* _handle)
     handle_counter_.decrement(nullmtx_);
 }
 
+/**
+ * @brief libuv callback: cancel signal received (cross-thread timer stop).
+ *
+ * Stops both retry_connect_timer_ and health_check_timer_ on the event-loop
+ * thread, then clears auto_reconn_hdl_running_.
+ *
+ * This is the safe cross-thread mechanism for stopping timers: disconnect()
+ * (callable from any thread) sends uv_async_send to this handle, and this
+ * callback runs uv_timer_stop on the event-loop thread where it is safe.
+ *
+ * @param _handle  The cancel async handle.
+ * @note Thread: libuv event-loop thread.
+ * @see disconnect() Phase 2, libuv design.rst thread-safety note.
+ */
 inline void uvbasic_client::on_retry_connect_cancel_call(uv_async_t* _handle)
 {
     if (log_lvl_ <= log_level::trace)
@@ -1697,6 +2588,10 @@ inline void uvbasic_client::on_retry_connect_cancel_call(uv_async_t* _handle)
     __set_auto_reconn_hdl_running_mt(false);
 }
 
+/**
+ * @brief libuv callback: cancel async handle closed.
+ * @note Thread: libuv event-loop thread.
+ */
 inline void uvbasic_client::on_retry_connect_cancel_close(uv_handle_t* _handle)
 {
     if (log_lvl_ <= log_level::trace)
@@ -1712,6 +2607,26 @@ inline void uvbasic_client::on_retry_connect_cancel_close(uv_handle_t* _handle)
     handle_counter_.decrement(nullmtx_);
 }
 
+/**
+ * @brief libuv callback: wrapper-level retry timer fired.
+ *
+ * ## Pre-checks (all on event-loop thread):
+ *   1. disconnect_requested_? -- stop timer, clear flag, return.
+ *   2. destroy_async_req_ exists? native_cli_ exists? connected already?
+ *      running flag set?  All checked under mtx_ with a scope_cleanup that
+ *      stops the timer on early exit.
+ *
+ * ## Core logic:
+ *   1. Calls __connect_mt() to attempt a fresh MQTTAsync_connect().
+ *   2. On success: the cleanup scope stops the timer.  Paho callbacks handle
+ *      the result.
+ *   3. On failure: cancels the cleanup, applies exponential backoff
+ *      (1s -> 2s -> 4s -> ... -> 16s cap), and restarts the timer as one-shot.
+ *
+ * @param _handle  The retry timer handle.
+ * @note Thread: libuv event-loop thread.
+ * @note Uses one-shot timer (repeat=0) -- restarted manually with new interval.
+ */
 inline void uvbasic_client::on_retry_connect_timer_call (uv_timer_t* _handle)
 {
     if (disconnect_requested_.load(std::memory_order_acquire))
@@ -1757,6 +2672,10 @@ inline void uvbasic_client::on_retry_connect_timer_call (uv_timer_t* _handle)
     }
 }
 
+/**
+ * @brief libuv callback: retry timer handle closed.
+ * @note Thread: libuv event-loop thread.
+ */
 inline void uvbasic_client::on_retry_connect_timer_close(uv_handle_t* _handle)
 {
     if (log_lvl_ <= log_level::trace)
@@ -1772,6 +2691,26 @@ inline void uvbasic_client::on_retry_connect_timer_close(uv_handle_t* _handle)
     handle_counter_.decrement(nullmtx_);
 }
 
+/**
+ * @brief libuv callback: health-check timer fired (Plans B + D).
+ *
+ * Active only while wait_conn_restored_ is true (Paho silently retrying).
+ *
+ * ## Each tick:
+ *   1. Bail if disconnect_requested_ is true.
+ *   2. Bail if wait_conn_restored_ has been cleared (on_connected fired first).
+ *   3. **Plan D**: Under mtx_, poll MQTTAsync_isConnected(native_cli_).
+ *      If Paho reports connected but the wrapper has not noticed -- auto-fix:
+ *      clear wait_conn_restored_, update connect_status_, stop timer,
+ *      fire reconnected_cb_ + connected_cb_.
+ *   4. **Plan B**: If reconnect_stalled_cb_ is set, call it with elapsed seconds
+ *      since reconnect_start_time_.
+ *   5. Restart the timer for the next tick.
+ *
+ * @param _handle  The health-check timer handle.
+ * @note Thread: libuv event-loop thread.
+ * @see reconnect_stalled_callback, set_health_check_interval()
+ */
 inline void uvbasic_client::on_health_check_timer_call(uv_timer_t* _handle)
 {
     // Stop if a user-requested disconnect is in progress
@@ -1827,6 +2766,10 @@ inline void uvbasic_client::on_health_check_timer_call(uv_timer_t* _handle)
                    health_check_interval_sec_.load(std::memory_order_acquire) * 1000, 0);
 }
 
+/**
+ * @brief libuv callback: health-check timer handle closed.
+ * @note Thread: libuv event-loop thread.
+ */
 inline void uvbasic_client::on_health_check_timer_close(uv_handle_t* _handle)
 {
     if (log_lvl_ <= log_level::trace)
@@ -1842,6 +2785,24 @@ inline void uvbasic_client::on_health_check_timer_close(uv_handle_t* _handle)
     handle_counter_.decrement(nullmtx_);
 }
 
+/**
+ * @brief Final destruction callback -- invoked when all libuv handles are closed.
+ *
+ * Triggered by handle_counter_ reaching 0.  Performs:
+ *   1. Extracts native_cli_ under mtx_ and sets it to nullptr (prevents any
+ *      in-flight Paho callbacks from accessing the handle).
+ *   2. Calls MQTTAsync_destroy(&hdl) which internally:
+ *      - Sends a DISCONNECT packet (if connected).
+ *      - Closes the socket.
+ *      - Frees all Paho-allocated resources.
+ *   3. self_ is reset on scope exit (via MEGOPP_UTIL__ON_SCOPE_CLEANUP),
+ *      releasing the final shared_ptr reference.
+ *
+ * @note Thread: libuv event-loop thread (triggered by last close callback).
+ * @note MQTTAsync_destroy() is called WITHOUT mtx_ held because it may
+ *       invoke callbacks that also acquire mtx_ leading to potential deadlock.
+ * @note No prior MQTTAsync_disconnect() is needed; destroy handles it internally.
+ */
 inline void uvbasic_client::on_destroy()
 {
     if (log_lvl_ <= log_level::trace)
@@ -1870,6 +2831,29 @@ inline void uvbasic_client::on_destroy()
     
 }
 
+/**
+ * @brief Internal: performs the actual MQTTAsync_connect() call.
+ *
+ * ## Pre-condition checks:
+ *   1. native_cli_ is non-null (under mtx_).
+ *   2. disconnect_requested_ is false (acquire).
+ *   3. connect_status_ == disconnected (acquire).
+ *
+ * ## Execution:
+ *   1. Sets connect_status_ = connecting (release).
+ *   2. Calls MQTTAsync_connect(hdl, &conn_opts_.raw()).
+ *   3. On synchronous failure: rolls back to disconnected and, if
+ *      disconnect_requested_ is now true (disconnect() called concurrently),
+ *      clears the flag to prevent permanent deadlock.
+ *
+ * @return mgpp::err -- OK if the connect was enqueued with Paho.
+ * @retval MGEC__ALREADY   Already connected or connecting, or native_cli_ is null.
+ * @retval MGEC__INPROGRESS disconnect_requested_ is true.
+ * @retval MGEC__ERR       MQTTAsync_connect() returned a synchronous error.
+ *
+ * @note Thread: caller's thread (connect() or retry timer callback).
+ * @note The _mt suffix is historical; no mutex is held during the Paho call.
+ */
 inline mgpp::err uvbasic_client::__connect_mt()
 {
     std::unique_lock<std::mutex> locker(mtx_);
@@ -1901,6 +2885,28 @@ inline mgpp::err uvbasic_client::__connect_mt()
     return {};
 }
 
+/**
+ * @brief Internal: performs the actual MQTTAsync_disconnect() call.
+ *
+ * ## Pre-condition checks:
+ *   1. native_cli_ is non-null (under mtx_).
+ *   2. connect_status_ == connected (acquire).
+ *
+ * ## Execution:
+ *   1. Sets connect_status_ = disconnecting (release).
+ *   2. Calls MQTTAsync_disconnect(hdl, &disconn_opts_.raw()).
+ *   3. On synchronous failure (e.g. Paho returns MQTTASYNC_DISCONNECTED
+ *      because m->c->connected == 0): rolls back to connected and clears
+ *      disconnect_requested_ defensively.
+ *
+ * @return mgpp::err -- OK if the disconnect was enqueued with Paho.
+ * @retval MGEC__ALREADY  Already disconnected, or native_cli_ is null.
+ * @retval MGEC__ERR      MQTTAsync_disconnect() returned a synchronous error.
+ *
+ * @note Thread: caller's thread (disconnect()).
+ * @note Paho MQTTAsync_disconnect() sets shouldBeConnected = 0, which stops
+ *       Paho internal auto-reconnect.
+ */
 inline mgpp::err uvbasic_client::__disconnect_mt()
 {
     std::unique_lock<std::mutex> locker(mtx_);
@@ -1935,6 +2941,26 @@ inline mgpp::err uvbasic_client::__disconnect_mt()
 //}
 
 inline outcome::checked<std::shared_ptr<uvbasic_client>, mgpp::err>
+/**
+ * @brief Static factory: creates, configures, and initialises a uvbasic_client.
+ *
+ * This is the only way to construct a uvbasic_client.  The constructor is private.
+ *
+ * ## Steps:
+ *   1. Creates native create options from user options.
+ *   2. Constructs the client (private constructor).
+ *   3. Calls set_conn_opts() -- copies user connect options to native struct.
+ *   4. Calls set_disconn_opts() -- copies user disconnect options to native struct.
+ *   5. Calls init() -- creates the Paho handle and all libuv handles.
+ *
+ * @param _opts          User-level create options (client ID, persistence).
+ * @param _conn_opts     User-level connect options (server URL, keep-alive, etc.).
+ * @param _disconn_opts  User-level disconnect options (timeout, reason code).
+ * @param _loop          The libuv event loop to attach handles to.
+ * @return outcome::checked -- either a shared_ptr to the new client, or an error.
+ *
+ * @note The client is returned in the disconnected state; call connect() to begin.
+ */
     uvbasic_client::create(
         const create_options& _opts,
         const connect_options& _conn_opts,
@@ -1959,180 +2985,526 @@ inline outcome::checked<std::shared_ptr<uvbasic_client>, mgpp::err>
     return outcome::success(cli);
 }
 
+/**
+ * @brief Static C-linkage thunk: forwards the Paho callback to the C++ member.
+ *
+ * Paho C API expects plain C function pointers.  The user data pointer
+ * (_context) is the `this` pointer of the uvbasic_client instance, set via
+ * options.context.  This thunk reinterpret_casts and dispatches to the
+ * corresponding on_*() method.
+ *
+ * @note Thread: Paho internal thread.
+ */
 inline int uvbasic_client::__on_message_arrived(void* _context, char* _topic_name, int _topic_len, MQTTAsync_message* _message)
 {
     return reinterpret_cast<uvbasic_client*>(_context)->on_message_arrived(_topic_name, _topic_len, _message);
 }
 
+/**
+ * @brief Static C-linkage thunk: forwards the Paho callback to the C++ member.
+ *
+ * Paho C API expects plain C function pointers.  The user data pointer
+ * (_context) is the `this` pointer of the uvbasic_client instance, set via
+ * options.context.  This thunk reinterpret_casts and dispatches to the
+ * corresponding on_*() method.
+ *
+ * @note Thread: Paho internal thread.
+ */
 inline void uvbasic_client::__on_delivery_complete(void* _context, MQTTAsync_token _token)
 {
     reinterpret_cast<uvbasic_client*>(_context)->on_delivery_complete(_token);
 }
 
+/**
+ * @brief Static C-linkage thunk: forwards the Paho callback to the C++ member.
+ *
+ * Paho C API expects plain C function pointers.  The user data pointer
+ * (_context) is the `this` pointer of the uvbasic_client instance, set via
+ * options.context.  This thunk reinterpret_casts and dispatches to the
+ * corresponding on_*() method.
+ *
+ * @note Thread: Paho internal thread.
+ */
 inline void uvbasic_client::__on_connect_lost(void *_context, char *_cause)
 {
     reinterpret_cast<uvbasic_client*>(_context)->on_connect_lost(_cause);
 }
 
+/**
+ * @brief Static C-linkage thunk: forwards the Paho callback to the C++ member.
+ *
+ * Paho C API expects plain C function pointers.  The user data pointer
+ * (_context) is the `this` pointer of the uvbasic_client instance, set via
+ * options.context.  This thunk reinterpret_casts and dispatches to the
+ * corresponding on_*() method.
+ *
+ * @note Thread: Paho internal thread.
+ */
 inline void uvbasic_client::__on_connected(void* _context, char* _cause)
 {
     reinterpret_cast<uvbasic_client*>(_context)->on_connected(_cause);
 }
 
+/**
+ * @brief Static C-linkage thunk: forwards the Paho callback to the C++ member.
+ *
+ * Paho C API expects plain C function pointers.  The user data pointer
+ * (_context) is the `this` pointer of the uvbasic_client instance, set via
+ * options.context.  This thunk reinterpret_casts and dispatches to the
+ * corresponding on_*() method.
+ *
+ * @note Thread: Paho internal thread.
+ */
 inline void uvbasic_client::__on_disconnected(void* _context, MQTTProperties* _response, enum MQTTReasonCodes _reason)
 {
     reinterpret_cast<uvbasic_client*>(_context)->on_disconnected(_response, _reason);
 }
 
+/**
+ * @brief Static C-linkage thunk: forwards the Paho callback to the C++ member.
+ *
+ * Paho C API expects plain C function pointers.  The user data pointer
+ * (_context) is the `this` pointer of the uvbasic_client instance, set via
+ * options.context.  This thunk reinterpret_casts and dispatches to the
+ * corresponding on_*() method.
+ *
+ * @note Thread: Paho internal thread.
+ */
 inline void uvbasic_client::__on_success(void* _context, MQTTAsync_successData* _response)
 {
     reinterpret_cast<uvbasic_client*>(_context)->on_success(_response);
 }
 
+/**
+ * @brief Static C-linkage thunk: forwards the Paho callback to the C++ member.
+ *
+ * Paho C API expects plain C function pointers.  The user data pointer
+ * (_context) is the `this` pointer of the uvbasic_client instance, set via
+ * options.context.  This thunk reinterpret_casts and dispatches to the
+ * corresponding on_*() method.
+ *
+ * @note Thread: Paho internal thread.
+ */
 inline void uvbasic_client::__on_failure(void* _context, MQTTAsync_failureData* _response)
 {
     reinterpret_cast<uvbasic_client*>(_context)->on_failure(_response);
 }
 
+/**
+ * @brief Static C-linkage thunk: forwards the Paho callback to the C++ member.
+ *
+ * Paho C API expects plain C function pointers.  The user data pointer
+ * (_context) is the `this` pointer of the uvbasic_client instance, set via
+ * options.context.  This thunk reinterpret_casts and dispatches to the
+ * corresponding on_*() method.
+ *
+ * @note Thread: Paho internal thread.
+ */
 inline void uvbasic_client::__on_success5(void* _context, MQTTAsync_successData5* _response)
 {
     reinterpret_cast<uvbasic_client*>(_context)->on_success5(_response);
 }
 
+/**
+ * @brief Static C-linkage thunk: forwards the Paho callback to the C++ member.
+ *
+ * Paho C API expects plain C function pointers.  The user data pointer
+ * (_context) is the `this` pointer of the uvbasic_client instance, set via
+ * options.context.  This thunk reinterpret_casts and dispatches to the
+ * corresponding on_*() method.
+ *
+ * @note Thread: Paho internal thread.
+ */
 inline void uvbasic_client::__on_failure5(void* _context, MQTTAsync_failureData5* _response)
 {
     reinterpret_cast<uvbasic_client*>(_context)->on_failure5(_response);
 }
 
+/**
+ * @brief Static C-linkage thunk: forwards the Paho callback to the C++ member.
+ *
+ * Paho C API expects plain C function pointers.  The user data pointer
+ * (_context) is the `this` pointer of the uvbasic_client instance, set via
+ * options.context.  This thunk reinterpret_casts and dispatches to the
+ * corresponding on_*() method.
+ *
+ * @note Thread: Paho internal thread.
+ */
 inline void uvbasic_client::__on_connect_success(void* _context, MQTTAsync_successData* _response)
 {
     reinterpret_cast<uvbasic_client*>(_context)->on_connect_success(_response);
 }
 
+/**
+ * @brief Static C-linkage thunk: forwards the Paho callback to the C++ member.
+ *
+ * Paho C API expects plain C function pointers.  The user data pointer
+ * (_context) is the `this` pointer of the uvbasic_client instance, set via
+ * options.context.  This thunk reinterpret_casts and dispatches to the
+ * corresponding on_*() method.
+ *
+ * @note Thread: Paho internal thread.
+ */
 inline void uvbasic_client::__on_connect_failure(void* _context, MQTTAsync_failureData* _response)
 {
     reinterpret_cast<uvbasic_client*>(_context)->on_connect_failure(_response);
 }
 
+/**
+ * @brief Static C-linkage thunk: forwards the Paho callback to the C++ member.
+ *
+ * Paho C API expects plain C function pointers.  The user data pointer
+ * (_context) is the `this` pointer of the uvbasic_client instance, set via
+ * options.context.  This thunk reinterpret_casts and dispatches to the
+ * corresponding on_*() method.
+ *
+ * @note Thread: Paho internal thread.
+ */
 inline void uvbasic_client::__on_connect_success5(void* _context, MQTTAsync_successData5* _response)
 {
     reinterpret_cast<uvbasic_client*>(_context)->on_connect_success5(_response);
 }
 
+/**
+ * @brief Static C-linkage thunk: forwards the Paho callback to the C++ member.
+ *
+ * Paho C API expects plain C function pointers.  The user data pointer
+ * (_context) is the `this` pointer of the uvbasic_client instance, set via
+ * options.context.  This thunk reinterpret_casts and dispatches to the
+ * corresponding on_*() method.
+ *
+ * @note Thread: Paho internal thread.
+ */
 inline void uvbasic_client::__on_connect_failure5(void* _context, MQTTAsync_failureData5* _response)
 {
     reinterpret_cast<uvbasic_client*>(_context)->on_connect_failure5(_response);
 }
 
+/**
+ * @brief Static C-linkage thunk: forwards the Paho callback to the C++ member.
+ *
+ * Paho C API expects plain C function pointers.  The user data pointer
+ * (_context) is the `this` pointer of the uvbasic_client instance, set via
+ * options.context.  This thunk reinterpret_casts and dispatches to the
+ * corresponding on_*() method.
+ *
+ * @note Thread: Paho internal thread.
+ */
 inline void uvbasic_client::__on_disconnect_success(void* _context, MQTTAsync_successData* _response)
 {
     reinterpret_cast<uvbasic_client*>(_context)->on_disconnect_success(_response);
 }
 
+/**
+ * @brief Static C-linkage thunk: forwards the Paho callback to the C++ member.
+ *
+ * Paho C API expects plain C function pointers.  The user data pointer
+ * (_context) is the `this` pointer of the uvbasic_client instance, set via
+ * options.context.  This thunk reinterpret_casts and dispatches to the
+ * corresponding on_*() method.
+ *
+ * @note Thread: Paho internal thread.
+ */
 inline void uvbasic_client::__on_disconnect_failure(void* _context, MQTTAsync_failureData* _response)
 {
     reinterpret_cast<uvbasic_client*>(_context)->on_disconnect_failure(_response);
 }
 
+/**
+ * @brief Static C-linkage thunk: forwards the Paho callback to the C++ member.
+ *
+ * Paho C API expects plain C function pointers.  The user data pointer
+ * (_context) is the `this` pointer of the uvbasic_client instance, set via
+ * options.context.  This thunk reinterpret_casts and dispatches to the
+ * corresponding on_*() method.
+ *
+ * @note Thread: Paho internal thread.
+ */
 inline void uvbasic_client::__on_disconnect_success5(void* _context, MQTTAsync_successData5* _response)
 {
     reinterpret_cast<uvbasic_client*>(_context)->on_disconnect_success5(_response);
 }
 
+/**
+ * @brief Static C-linkage thunk: forwards the Paho callback to the C++ member.
+ *
+ * Paho C API expects plain C function pointers.  The user data pointer
+ * (_context) is the `this` pointer of the uvbasic_client instance, set via
+ * options.context.  This thunk reinterpret_casts and dispatches to the
+ * corresponding on_*() method.
+ *
+ * @note Thread: Paho internal thread.
+ */
 inline void uvbasic_client::__on_disconnect_failure5(void* _context, MQTTAsync_failureData5* _response)
 {
     reinterpret_cast<uvbasic_client*>(_context)->on_disconnect_failure5(_response);
 }
 
+/**
+ * @brief Static C-linkage thunk: forwards the Paho callback to the C++ member.
+ *
+ * Paho C API expects plain C function pointers.  The user data pointer
+ * (_context) is the `this` pointer of the uvbasic_client instance, set via
+ * options.context.  This thunk reinterpret_casts and dispatches to the
+ * corresponding on_*() method.
+ *
+ * @note Thread: Paho internal thread.
+ */
 inline void uvbasic_client::__on_subscribe_success(void* _context, MQTTAsync_successData* _response)
 {
     reinterpret_cast<uvbasic_client*>(_context)->on_subscribe_success(_response);
 }
 
+/**
+ * @brief Static C-linkage thunk: forwards the Paho callback to the C++ member.
+ *
+ * Paho C API expects plain C function pointers.  The user data pointer
+ * (_context) is the `this` pointer of the uvbasic_client instance, set via
+ * options.context.  This thunk reinterpret_casts and dispatches to the
+ * corresponding on_*() method.
+ *
+ * @note Thread: Paho internal thread.
+ */
 inline void uvbasic_client::__on_subscribe_failure(void* _context, MQTTAsync_failureData* _response)
 {
     reinterpret_cast<uvbasic_client*>(_context)->on_subscribe_failure(_response);
 }
 
+/**
+ * @brief Static C-linkage thunk: forwards the Paho callback to the C++ member.
+ *
+ * Paho C API expects plain C function pointers.  The user data pointer
+ * (_context) is the `this` pointer of the uvbasic_client instance, set via
+ * options.context.  This thunk reinterpret_casts and dispatches to the
+ * corresponding on_*() method.
+ *
+ * @note Thread: Paho internal thread.
+ */
 inline void uvbasic_client::__on_subscribe_success5(void* _context, MQTTAsync_successData5* _response)
 {
     reinterpret_cast<uvbasic_client*>(_context)->on_subscribe_success5(_response);
 }
 
+/**
+ * @brief Static C-linkage thunk: forwards the Paho callback to the C++ member.
+ *
+ * Paho C API expects plain C function pointers.  The user data pointer
+ * (_context) is the `this` pointer of the uvbasic_client instance, set via
+ * options.context.  This thunk reinterpret_casts and dispatches to the
+ * corresponding on_*() method.
+ *
+ * @note Thread: Paho internal thread.
+ */
 inline void uvbasic_client::__on_subscribe_failure5(void* _context, MQTTAsync_failureData5* _response)
 {
     reinterpret_cast<uvbasic_client*>(_context)->on_subscribe_failure5(_response);
 }
 
+/**
+ * @brief Static C-linkage thunk: forwards the Paho callback to the C++ member.
+ *
+ * Paho C API expects plain C function pointers.  The user data pointer
+ * (_context) is the `this` pointer of the uvbasic_client instance, set via
+ * options.context.  This thunk reinterpret_casts and dispatches to the
+ * corresponding on_*() method.
+ *
+ * @note Thread: Paho internal thread.
+ */
 inline void uvbasic_client::__on_unsubscribe_success(void* _context, MQTTAsync_successData* _response)
 {
     reinterpret_cast<uvbasic_client*>(_context)->on_unsubscribe_success(_response);
 }
 
+/**
+ * @brief Static C-linkage thunk: forwards the Paho callback to the C++ member.
+ *
+ * Paho C API expects plain C function pointers.  The user data pointer
+ * (_context) is the `this` pointer of the uvbasic_client instance, set via
+ * options.context.  This thunk reinterpret_casts and dispatches to the
+ * corresponding on_*() method.
+ *
+ * @note Thread: Paho internal thread.
+ */
 inline void uvbasic_client::__on_unsubscribe_failure(void* _context, MQTTAsync_failureData* _response)
 {
     reinterpret_cast<uvbasic_client*>(_context)->on_unsubscribe_failure(_response);
 }
 
+/**
+ * @brief Static C-linkage thunk: forwards the Paho callback to the C++ member.
+ *
+ * Paho C API expects plain C function pointers.  The user data pointer
+ * (_context) is the `this` pointer of the uvbasic_client instance, set via
+ * options.context.  This thunk reinterpret_casts and dispatches to the
+ * corresponding on_*() method.
+ *
+ * @note Thread: Paho internal thread.
+ */
 inline void uvbasic_client::__on_unsubscribe_success5(void* _context, MQTTAsync_successData5* _response)
 {
     reinterpret_cast<uvbasic_client*>(_context)->on_unsubscribe_success5(_response);
 }
 
+/**
+ * @brief Static C-linkage thunk: forwards the Paho callback to the C++ member.
+ *
+ * Paho C API expects plain C function pointers.  The user data pointer
+ * (_context) is the `this` pointer of the uvbasic_client instance, set via
+ * options.context.  This thunk reinterpret_casts and dispatches to the
+ * corresponding on_*() method.
+ *
+ * @note Thread: Paho internal thread.
+ */
 inline void uvbasic_client::__on_unsubscribe_failure5(void* _context, MQTTAsync_failureData5* _response)
 {
     reinterpret_cast<uvbasic_client*>(_context)->on_unsubscribe_failure5(_response);
 }
 
+/**
+ * @brief Static C-linkage thunk: forwards the Paho callback to the C++ member.
+ *
+ * Paho C API expects plain C function pointers.  The user data pointer
+ * (_context) is the `this` pointer of the uvbasic_client instance, set via
+ * options.context.  This thunk reinterpret_casts and dispatches to the
+ * corresponding on_*() method.
+ *
+ * @note Thread: Paho internal thread.
+ */
 inline void uvbasic_client::__on_publish_success(void* _context, MQTTAsync_successData* _response)
 {
     reinterpret_cast<uvbasic_client*>(_context)->on_publish_success(_response);
 }
 
+/**
+ * @brief Static C-linkage thunk: forwards the Paho callback to the C++ member.
+ *
+ * Paho C API expects plain C function pointers.  The user data pointer
+ * (_context) is the `this` pointer of the uvbasic_client instance, set via
+ * options.context.  This thunk reinterpret_casts and dispatches to the
+ * corresponding on_*() method.
+ *
+ * @note Thread: Paho internal thread.
+ */
 inline void uvbasic_client::__on_publish_failure(void* _context, MQTTAsync_failureData* _response)
 {
     reinterpret_cast<uvbasic_client*>(_context)->on_publish_failure(_response);
 }
 
+/**
+ * @brief Static C-linkage thunk: forwards the Paho callback to the C++ member.
+ *
+ * Paho C API expects plain C function pointers.  The user data pointer
+ * (_context) is the `this` pointer of the uvbasic_client instance, set via
+ * options.context.  This thunk reinterpret_casts and dispatches to the
+ * corresponding on_*() method.
+ *
+ * @note Thread: Paho internal thread.
+ */
 inline void uvbasic_client::__on_publish_success5(void* _context, MQTTAsync_successData5* _response)
 {
     reinterpret_cast<uvbasic_client*>(_context)->on_publish_success5(_response);
 }
 
+/**
+ * @brief Static C-linkage thunk: forwards the Paho callback to the C++ member.
+ *
+ * Paho C API expects plain C function pointers.  The user data pointer
+ * (_context) is the `this` pointer of the uvbasic_client instance, set via
+ * options.context.  This thunk reinterpret_casts and dispatches to the
+ * corresponding on_*() method.
+ *
+ * @note Thread: Paho internal thread.
+ */
 inline void uvbasic_client::__on_publish_failure5(void* _context, MQTTAsync_failureData5* _response)
 {
     reinterpret_cast<uvbasic_client*>(_context)->on_publish_failure5(_response);
 }
 
+/**
+ * @brief Static C-linkage thunk: forwards the Paho callback to the C++ member.
+ *
+ * Paho C API expects plain C function pointers.  The user data pointer
+ * (_context) is the `this` pointer of the uvbasic_client instance, set via
+ * options.context.  This thunk reinterpret_casts and dispatches to the
+ * corresponding on_*() method.
+ *
+ * @note Thread: Paho internal thread.
+ */
 inline int uvbasic_client::__on_ssl_error(const char* _str, size_t _len, void* _context)
 {
     return reinterpret_cast<uvbasic_client*>(_context)->on_ssl_error(_str, _len);
 }
 
+/**
+ * @brief Static C-linkage thunk: forwards the Paho callback to the C++ member.
+ *
+ * Paho C API expects plain C function pointers.  The user data pointer
+ * (_context) is the `this` pointer of the uvbasic_client instance, set via
+ * options.context.  This thunk reinterpret_casts and dispatches to the
+ * corresponding on_*() method.
+ *
+ * @note Thread: Paho internal thread.
+ */
 inline unsigned int uvbasic_client::__on_ssl_psk(const char* _hint, char* _identity, unsigned int _max_identity_len, unsigned char* _psk, unsigned int _max_psk_len, void* _context)
 {
     return reinterpret_cast<uvbasic_client*>(_context)->on_ssl_psk(_hint, _identity, _max_identity_len, _psk, _max_psk_len);
 }
     
 
+/**
+ * @brief Static C-linkage thunk: forwards the libuv callback to the C++ member.
+ *
+ * libuv expects plain C function pointers for handle callbacks.  The user data
+ * (set via uv_handle_set_data) is the `this` pointer.  This thunk retrieves it
+ * and dispatches to the corresponding on_*() method.
+ *
+ * @note Thread: libuv event-loop thread.
+ */
 inline void uvbasic_client::__on_destroy_async_call(uv_async_t* _handle)
 {
     auto p = reinterpret_cast<uvbasic_client*>(uv_handle_get_data(reinterpret_cast<uv_handle_t*>(_handle)));
     p->on_destroy_async_call(_handle);
 }
 
+/**
+ * @brief Static C-linkage thunk: forwards the libuv callback to the C++ member.
+ *
+ * libuv expects plain C function pointers for handle callbacks.  The user data
+ * (set via uv_handle_set_data) is the `this` pointer.  This thunk retrieves it
+ * and dispatches to the corresponding on_*() method.
+ *
+ * @note Thread: libuv event-loop thread.
+ */
 inline void uvbasic_client::__on_destroy_async_close(uv_handle_t* _handle)
 {
     auto p = reinterpret_cast<uvbasic_client*>(uv_handle_get_data(_handle));
     p->on_destroy_async_close(_handle);
 }
 
+/**
+ * @brief Static C-linkage thunk: forwards the libuv callback to the C++ member.
+ *
+ * libuv expects plain C function pointers for handle callbacks.  The user data
+ * (set via uv_handle_set_data) is the `this` pointer.  This thunk retrieves it
+ * and dispatches to the corresponding on_*() method.
+ *
+ * @note Thread: libuv event-loop thread.
+ */
 inline void uvbasic_client::__on_retry_connect_async_call(uv_async_t* _handle)
 {
     auto p = reinterpret_cast<uvbasic_client*>(uv_handle_get_data(reinterpret_cast<uv_handle_t*>(_handle)));
     p->on_retry_connect_async_call(_handle);
 }
 
+/**
+ * @brief Static C-linkage thunk: forwards the libuv callback to the C++ member.
+ *
+ * libuv expects plain C function pointers for handle callbacks.  The user data
+ * (set via uv_handle_set_data) is the `this` pointer.  This thunk retrieves it
+ * and dispatches to the corresponding on_*() method.
+ *
+ * @note Thread: libuv event-loop thread.
+ */
 inline void uvbasic_client::__on_retry_connect_async_close(uv_handle_t* _handle)
 {
     auto p = reinterpret_cast<uvbasic_client*>(uv_handle_get_data(_handle));
@@ -2140,36 +3512,90 @@ inline void uvbasic_client::__on_retry_connect_async_close(uv_handle_t* _handle)
 }
 
 
+/**
+ * @brief Static C-linkage thunk: forwards the libuv callback to the C++ member.
+ *
+ * libuv expects plain C function pointers for handle callbacks.  The user data
+ * (set via uv_handle_set_data) is the `this` pointer.  This thunk retrieves it
+ * and dispatches to the corresponding on_*() method.
+ *
+ * @note Thread: libuv event-loop thread.
+ */
 inline void uvbasic_client::__on_retry_connect_cancel_call (uv_async_t * _handle)
 {
     auto p = reinterpret_cast<uvbasic_client*>(uv_handle_get_data(reinterpret_cast<uv_handle_t*>(_handle)));
     p->on_retry_connect_cancel_call(_handle);
 }
 
+/**
+ * @brief Static C-linkage thunk: forwards the libuv callback to the C++ member.
+ *
+ * libuv expects plain C function pointers for handle callbacks.  The user data
+ * (set via uv_handle_set_data) is the `this` pointer.  This thunk retrieves it
+ * and dispatches to the corresponding on_*() method.
+ *
+ * @note Thread: libuv event-loop thread.
+ */
 inline void uvbasic_client::__on_retry_connect_cancel_close(uv_handle_t* _handle)
 {
     auto p = reinterpret_cast<uvbasic_client*>(uv_handle_get_data(_handle));
     p->on_retry_connect_cancel_close(_handle);
 }
 
+/**
+ * @brief Static C-linkage thunk: forwards the libuv callback to the C++ member.
+ *
+ * libuv expects plain C function pointers for handle callbacks.  The user data
+ * (set via uv_handle_set_data) is the `this` pointer.  This thunk retrieves it
+ * and dispatches to the corresponding on_*() method.
+ *
+ * @note Thread: libuv event-loop thread.
+ */
 inline void uvbasic_client::__on_retry_connect_timer_call(uv_timer_t* _handle)
 {
     auto p = reinterpret_cast<uvbasic_client*>(uv_handle_get_data(reinterpret_cast<uv_handle_t*>(_handle)));
     p->on_retry_connect_timer_call(_handle);
 }
 
+/**
+ * @brief Static C-linkage thunk: forwards the libuv callback to the C++ member.
+ *
+ * libuv expects plain C function pointers for handle callbacks.  The user data
+ * (set via uv_handle_set_data) is the `this` pointer.  This thunk retrieves it
+ * and dispatches to the corresponding on_*() method.
+ *
+ * @note Thread: libuv event-loop thread.
+ */
 inline void uvbasic_client::__on_retry_connect_timer_close(uv_handle_t* _handle)
 {
     auto p = reinterpret_cast<uvbasic_client*>(uv_handle_get_data(_handle));
     p->on_retry_connect_timer_close(_handle);
 }
 
+/**
+ * @brief Static C-linkage thunk: forwards the libuv callback to the C++ member.
+ *
+ * libuv expects plain C function pointers for handle callbacks.  The user data
+ * (set via uv_handle_set_data) is the `this` pointer.  This thunk retrieves it
+ * and dispatches to the corresponding on_*() method.
+ *
+ * @note Thread: libuv event-loop thread.
+ */
 inline void uvbasic_client::__on_health_check_timer_call(uv_timer_t* _handle)
 {
     auto p = reinterpret_cast<uvbasic_client*>(uv_handle_get_data(reinterpret_cast<uv_handle_t*>(_handle)));
     p->on_health_check_timer_call(_handle);
 }
 
+/**
+ * @brief Static C-linkage thunk: forwards the libuv callback to the C++ member.
+ *
+ * libuv expects plain C function pointers for handle callbacks.  The user data
+ * (set via uv_handle_set_data) is the `this` pointer.  This thunk retrieves it
+ * and dispatches to the corresponding on_*() method.
+ *
+ * @note Thread: libuv event-loop thread.
+ */
 inline void uvbasic_client::__on_health_check_timer_close(uv_handle_t* _handle)
 {
     auto p = reinterpret_cast<uvbasic_client*>(uv_handle_get_data(_handle));
