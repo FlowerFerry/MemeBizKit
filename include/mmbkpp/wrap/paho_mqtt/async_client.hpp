@@ -3000,7 +3000,13 @@ inline mgpp::err uvbasic_client::__disconnect_mt()
     locker.unlock();
 
     if (connect_status_.value.load(std::memory_order_acquire) != connect_status::connected)
+    {
+        // Bug fix: disconnect() set disconnect_requested_ = true before calling
+        // __disconnect_mt().  If connect_status_ changed between the two checks
+        // (TOCTOU), clear the flag so connect() is not permanently blocked.
+        disconnect_requested_.store(false, std::memory_order_release);
         return mgpp::err{ MGEC__ALREADY, "already disconnected" };
+    }
     connect_status_.value.store(connect_status::disconnecting, std::memory_order_release);
 
     int rc = 0;
