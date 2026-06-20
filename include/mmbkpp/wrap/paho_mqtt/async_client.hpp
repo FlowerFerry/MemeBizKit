@@ -492,7 +492,10 @@ protected:
     std::unique_ptr<uv_timer_t> retry_connect_timer_;
 
     std::unique_ptr<uv_timer_t> health_check_timer_;
-    std::chrono::steady_clock::time_point reconnect_start_time_;
+    // Reconnect start epoch in steady-clock milliseconds.
+    // Written from Paho threads, read from libuv event-loop thread;
+    // std::atomic prevents formal data-race UB (see NEW-1).
+    std::atomic_int_fast64_t reconnect_start_time_ms_{0};
     std::atomic_int health_check_interval_sec_{10};
 
     std::atomic_int retry_connect_backoff_ms_{1000};
@@ -754,8 +757,13 @@ inline mgpp::err uvbasic_client::disconnect()
     if (__auto_reconn_hdl_running_st())
         __set_auto_reconn_hdl_running_st(false);
 
-    if (retry_connect_async_cancel_)
-        uv_async_send(retry_connect_async_cancel_.get());
+    {
+        // Read retry_connect_async_cancel_ under mtx_ — on_retry_connect_cancel_close
+        // may reset() it on the event-loop thread during destroy (see NEW-2).
+        std::unique_lock<std::mutex> locker(mtx_);
+        if (retry_connect_async_cancel_)
+            uv_async_send(retry_connect_async_cancel_.get());
+    }
 
     // Phase 3: Route based on current connection state
     int cur = connect_status_.value.load(std::memory_order_acquire);
@@ -1674,7 +1682,10 @@ inline void uvbasic_client::on_connect_lost(char* _cause)
 
         // Start health-check timer for periodic reconnect-stalled notifications
         // and MQTTAsync_isConnected polling (Plans B + D).
-        reconnect_start_time_ = std::chrono::steady_clock::now();
+        reconnect_start_time_ms_.store(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count(),
+            std::memory_order_release);
         // Delegate uv_timer_start to the event-loop thread — uv_timer_start
         // is not thread-safe and this callback runs on Paho's internal thread.
         health_check_timer_needs_start_.store(true, std::memory_order_release);
@@ -1999,7 +2010,10 @@ inline void uvbasic_client::on_connect_failure(MQTTAsync_failureData* _response)
 
         // Start health-check timer for periodic reconnect-stalled notifications
         // and MQTTAsync_isConnected polling (Plans B + D).
-        reconnect_start_time_ = std::chrono::steady_clock::now();
+        reconnect_start_time_ms_.store(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count(),
+            std::memory_order_release);
         // Delegate uv_timer_start to the event-loop thread — uv_timer_start
         // is not thread-safe and this callback runs on Paho's internal thread.
         health_check_timer_needs_start_.store(true, std::memory_order_release);
@@ -2095,7 +2109,10 @@ inline void uvbasic_client::on_connect_failure5(MQTTAsync_failureData5* _respons
 
         // Start health-check timer for periodic reconnect-stalled notifications
         // and MQTTAsync_isConnected polling (Plans B + D).
-        reconnect_start_time_ = std::chrono::steady_clock::now();
+        reconnect_start_time_ms_.store(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count(),
+            std::memory_order_release);
         // Delegate uv_timer_start to the event-loop thread — uv_timer_start
         // is not thread-safe and this callback runs on Paho's internal thread.
         health_check_timer_needs_start_.store(true, std::memory_order_release);
@@ -2738,7 +2755,7 @@ inline void uvbasic_client::on_retry_connect_timer_close(uv_handle_t* _handle)
  *      clear wait_conn_restored_, update connect_status_, stop timer,
  *      fire reconnected_cb_ + connected_cb_.
  *   4. **Plan B**: If reconnect_stalled_cb_ is set, call it with elapsed seconds
- *      since reconnect_start_time_.
+ *      since reconnect_start_time_ms_.
  *   5. Restart the timer for the next tick.
  *
  * @param _handle  The health-check timer handle.
@@ -2790,8 +2807,12 @@ inline void uvbasic_client::on_health_check_timer_call(uv_timer_t* _handle)
     // Plan B: Periodic reminder — notify the upper layer about ongoing reconnect
     if (reconnect_stalled_cb_)
     {
+        auto start_ms = std::chrono::milliseconds(
+            reconnect_start_time_ms_.load(std::memory_order_acquire));
+        auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch());
         auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
-            std::chrono::steady_clock::now() - reconnect_start_time_).count();
+            now_ms - start_ms).count();
         reconnect_stalled_cb_(weak_from_this(), elapsed);
     }
 
