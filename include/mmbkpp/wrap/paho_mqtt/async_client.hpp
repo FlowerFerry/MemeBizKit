@@ -496,6 +496,8 @@ protected:
     std::atomic_int health_check_interval_sec_{10};
 
     std::atomic_int retry_connect_backoff_ms_{1000};
+
+    std::atomic_bool health_check_timer_needs_start_{false};
     
 };
 
@@ -1673,14 +1675,20 @@ inline void uvbasic_client::on_connect_lost(char* _cause)
         // Start health-check timer for periodic reconnect-stalled notifications
         // and MQTTAsync_isConnected polling (Plans B + D).
         reconnect_start_time_ = std::chrono::steady_clock::now();
-        if (health_check_timer_)
-            uv_timer_start(health_check_timer_.get(), __on_health_check_timer_call,
-                           health_check_interval_sec_.load(std::memory_order_acquire) * 1000, 0);
+        // Delegate uv_timer_start to the event-loop thread — uv_timer_start
+        // is not thread-safe and this callback runs on Paho's internal thread.
+        health_check_timer_needs_start_.store(true, std::memory_order_release);
+        {
+            std::unique_lock<std::mutex> locker(mtx_);
+            if (retry_connect_async_cancel_)
+                uv_async_send(retry_connect_async_cancel_.get());
+        }
     }
     else
     {
         // No auto-reconnect — must update the state machine
         connect_status_.value.store(connect_status::disconnected, std::memory_order_release);
+        wait_conn_restored_.store(false, std::memory_order_release);
     }
 
     if (connect_lost_cb_)
@@ -1730,9 +1738,14 @@ inline void uvbasic_client::on_connected(char* _cause)
     if (wait_conn_restored_.load(std::memory_order_acquire)) {
         wait_conn_restored_.store(false, std::memory_order_release);
 
-        // Stop the health-check timer — reconnect has succeeded
-        if (health_check_timer_)
-            uv_timer_stop(health_check_timer_.get());
+        // Stop the health-check timer — reconnect has succeeded.
+        // Delegate uv_timer_stop to the event-loop thread — uv_timer_stop
+        // is not thread-safe and this callback runs on Paho's internal thread.
+        {
+            std::unique_lock<std::mutex> locker(mtx_);
+            if (retry_connect_async_cancel_)
+                uv_async_send(retry_connect_async_cancel_.get());
+        }
 
         if (connect_status_.value.load(std::memory_order_acquire) == connect_status::connecting)
             connect_status_.value.store(connect_status::connected, std::memory_order_release);
@@ -1987,9 +2000,14 @@ inline void uvbasic_client::on_connect_failure(MQTTAsync_failureData* _response)
         // Start health-check timer for periodic reconnect-stalled notifications
         // and MQTTAsync_isConnected polling (Plans B + D).
         reconnect_start_time_ = std::chrono::steady_clock::now();
-        if (health_check_timer_)
-            uv_timer_start(health_check_timer_.get(), __on_health_check_timer_call,
-                           health_check_interval_sec_.load(std::memory_order_acquire) * 1000, 0);
+        // Delegate uv_timer_start to the event-loop thread — uv_timer_start
+        // is not thread-safe and this callback runs on Paho's internal thread.
+        health_check_timer_needs_start_.store(true, std::memory_order_release);
+        {
+            std::unique_lock<std::mutex> locker(mtx_);
+            if (retry_connect_async_cancel_)
+                uv_async_send(retry_connect_async_cancel_.get());
+        }
     }
     else
     {
@@ -2078,9 +2096,14 @@ inline void uvbasic_client::on_connect_failure5(MQTTAsync_failureData5* _respons
         // Start health-check timer for periodic reconnect-stalled notifications
         // and MQTTAsync_isConnected polling (Plans B + D).
         reconnect_start_time_ = std::chrono::steady_clock::now();
-        if (health_check_timer_)
-            uv_timer_start(health_check_timer_.get(), __on_health_check_timer_call,
-                           health_check_interval_sec_.load(std::memory_order_acquire) * 1000, 0);
+        // Delegate uv_timer_start to the event-loop thread — uv_timer_start
+        // is not thread-safe and this callback runs on Paho's internal thread.
+        health_check_timer_needs_start_.store(true, std::memory_order_release);
+        {
+            std::unique_lock<std::mutex> locker(mtx_);
+            if (retry_connect_async_cancel_)
+                uv_async_send(retry_connect_async_cancel_.get());
+        }
     }
     else
     {
@@ -2580,12 +2603,23 @@ inline void uvbasic_client::on_retry_connect_cancel_call(uv_async_t* _handle)
 
     // Stop both timers on the event-loop thread — uv_timer_stop is not
     // thread-safe (per libuv design.rst), and this callback runs on the
-    // event-loop thread via uv_async_send from disconnect().
+    // event-loop thread via uv_async_send from disconnect() or Paho callbacks.
     if (retry_connect_timer_)
         uv_timer_stop(retry_connect_timer_.get());
     if (health_check_timer_)
         uv_timer_stop(health_check_timer_.get());
     __set_auto_reconn_hdl_running_mt(false);
+
+    // Start the health-check timer if delegated from a Paho callback.
+    // uv_timer_start is NOT thread-safe; this callback runs on the event-loop
+    // thread, so it is safe to start the timer here.
+    if (health_check_timer_needs_start_.load(std::memory_order_acquire))
+    {
+        health_check_timer_needs_start_.store(false, std::memory_order_release);
+        if (health_check_timer_)
+            uv_timer_start(health_check_timer_.get(), __on_health_check_timer_call,
+                           health_check_interval_sec_.load(std::memory_order_acquire) * 1000, 0);
+    }
 }
 
 /**

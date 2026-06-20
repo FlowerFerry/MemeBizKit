@@ -768,6 +768,10 @@ namespace async {
             return;
         
         server_url_ = connect_options::convert_url(_server_url, !!ssl_opt_);
+        // Propagate to the raw Paho struct so MQTTAsync_connect() uses the
+        // updated URL.  Paho copies the string internally (MQTTStrdup), so
+        // the pointer only needs to be valid during the connect call.
+        raw_conn_opt_.serverURI = server_url_.empty() ? nullptr : server_url_.data();
     }
 
     inline void connect_native_options::set_ssl_default()
