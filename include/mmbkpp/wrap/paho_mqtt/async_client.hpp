@@ -1739,10 +1739,39 @@ inline void uvbasic_client::on_connected(char* _cause)
 
     if (disconnect_requested_.load(std::memory_order_acquire))
     {
-        // User called disconnect() while auto-reconnect was in progress;
-        // on_connect_success has already handled the disconnect path
-        // (set connect_status_=disconnecting + called MQTTAsync_disconnect).
-        // No-op here to avoid a duplicate MQTTAsync_disconnect call.
+        // Two paths reach here:
+        //   Normal: on_connect_success already handled the disconnect
+        //           (set connect_status_=disconnecting + called MQTTAsync_disconnect).
+        //           No-op to avoid a duplicate MQTTAsync_disconnect call.
+        //   Race:   on_connect_success read disconnect_requested_=false before
+        //           the user thread set it, set connect_status_=connected, and
+        //           called us.  disconnect() saw connecting and returned OK
+        //           expecting the callback to handle it.  We must handle it here
+        //           to prevent disconnect_requested_ from being stuck forever.
+        if (connect_status_.value.load(std::memory_order_acquire) == connect_status::connected)
+        {
+            connect_status_.value.store(connect_status::disconnecting, std::memory_order_release);
+            // Lock to safely read native_cli_ — this callback runs on Paho's
+            // internal thread, while on_destroy() may concurrently write
+            // native_cli_ = nullptr under mtx_.
+            MQTTAsync hdl;
+            {
+                std::unique_lock<std::mutex> locker(mtx_);
+                hdl = native_cli_;
+            }
+            if (hdl)
+            {
+                int rc = MQTTAsync_disconnect(hdl, &disconn_opts_.raw());
+                if (rc != MQTTASYNC_SUCCESS)
+                {
+                    // Paho returned a synchronous error (e.g. MQTTASYNC_DISCONNECTED
+                    // because m->c->connected==0).  No async callback will fire, so
+                    // clean up here to prevent disconnect_requested_ from being stuck.
+                    connect_status_.value.store(connect_status::disconnected, std::memory_order_release);
+                    disconnect_requested_.store(false, std::memory_order_release);
+                }
+            }
+        }
         return;
     }
 
