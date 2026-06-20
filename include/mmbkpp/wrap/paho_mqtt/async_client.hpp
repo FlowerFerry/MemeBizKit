@@ -669,8 +669,12 @@ inline mgpp::err uvbasic_client::connect()
         return mgpp::err{ MGEC__INPROGRESS, "auto reconnect is running" };
     locker.unlock();
     
-    // Reset backoff for fresh user-initiated connect
+    // Reset backoff and reconnect-wait flag for fresh user-initiated connect.
+    // Clearing wait_conn_restored_ prevents a spurious reconnected_cb_ when
+    // a prior connection's on_connect_lost fires on Paho's receive thread
+    // between MQTTAsync_connect() success and the CONNACK arrival (BUG 30).
     retry_connect_backoff_ms_.store(1000, std::memory_order_release);
+    wait_conn_restored_.store(false, std::memory_order_release);
     
     auto e = __connect_mt();
     if ( e ) {
