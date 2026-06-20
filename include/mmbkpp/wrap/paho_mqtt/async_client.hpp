@@ -1674,11 +1674,20 @@ inline void uvbasic_client::on_connect_lost(char* _cause)
 
     if (conn_opts_.raw().automaticReconnect != 0)
     {
-        wait_conn_restored_.store(true, std::memory_order_release);
-        // Paho's startConnectRetry handles the actual reconnection;
-        // shouldBeConnected is still 1 since user didn't call MQTTAsync_disconnect.
-        // Update status to reflect that a reconnect attempt is in progress.
-        connect_status_.value.store(connect_status::connecting, std::memory_order_release);
+        // If connect_status_ is already connecting, user called connect()
+        // concurrently and a fresh connect is in flight.  Only set up
+        // reconnect tracking when we are NOT in that state, otherwise
+        // on_connected would misclassify the fresh connect as a
+        // Paho auto-reconnect recovery and spuriously fire reconnected_cb_.
+        auto st = connect_status_.value.load(std::memory_order_acquire);
+        if (st != connect_status::connecting)
+        {
+            wait_conn_restored_.store(true, std::memory_order_release);
+            // Paho's startConnectRetry handles the actual reconnection;
+            // shouldBeConnected is still 1 since user didn't call MQTTAsync_disconnect.
+            // Update status to reflect that a reconnect attempt is in progress.
+            connect_status_.value.store(connect_status::connecting, std::memory_order_release);
+        }
 
         // Start health-check timer for periodic reconnect-stalled notifications
         // and MQTTAsync_isConnected polling (Plans B + D).
@@ -2035,7 +2044,16 @@ inline void uvbasic_client::on_connect_failure(MQTTAsync_failureData* _response)
 
     if (conn_opts_.raw().automaticReconnect != 0)
     {
-        wait_conn_restored_.store(true, std::memory_order_release);
+        // If connect_status_ is already connecting, user called connect()
+        // concurrently and a fresh connect is in flight.  Only set up
+        // reconnect tracking when we are NOT in that state, otherwise
+        // on_connected would misclassify the fresh connect as a
+        // Paho auto-reconnect recovery and spuriously fire reconnected_cb_.
+        auto st = connect_status_.value.load(std::memory_order_acquire);
+        if (st != connect_status::connecting)
+        {
+            wait_conn_restored_.store(true, std::memory_order_release);
+        }
 
         // Start health-check timer for periodic reconnect-stalled notifications
         // and MQTTAsync_isConnected polling (Plans B + D).
@@ -2134,7 +2152,16 @@ inline void uvbasic_client::on_connect_failure5(MQTTAsync_failureData5* _respons
 
     if (conn_opts_.raw().automaticReconnect != 0)
     {
-        wait_conn_restored_.store(true, std::memory_order_release);
+        // If connect_status_ is already connecting, user called connect()
+        // concurrently and a fresh connect is in flight.  Only set up
+        // reconnect tracking when we are NOT in that state, otherwise
+        // on_connected would misclassify the fresh connect as a
+        // Paho auto-reconnect recovery and spuriously fire reconnected_cb_.
+        auto st = connect_status_.value.load(std::memory_order_acquire);
+        if (st != connect_status::connecting)
+        {
+            wait_conn_restored_.store(true, std::memory_order_release);
+        }
 
         // Start health-check timer for periodic reconnect-stalled notifications
         // and MQTTAsync_isConnected polling (Plans B + D).
