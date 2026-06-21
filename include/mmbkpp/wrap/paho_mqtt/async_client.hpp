@@ -272,6 +272,29 @@ public:
  */
     inline bool is_connected() const noexcept { auto hdl = native_mt(); return hdl && MQTTAsync_isConnected(hdl); }
 
+    /**
+     * @brief CR-1 fix: queries MQTTAsync_isConnected() WITHOUT holding mtx_.
+     *
+     * Reads native_cli_ under mtx_, copies the handle, then releases the lock
+     * BEFORE calling the Paho API.  This avoids an ABBA deadlock between our
+     * mtx_ and Paho's internal mqttasync_mutex:
+     *
+     *   T1 (Paho receive thread): holds mqttasync_mutex → callback → tries mtx_
+     *   T2 (libuv/user thread):    holds mtx_ → MQTTAsync_isConnected → tries mqttasync_mutex
+     *
+     * @return true if connected (native_cli_ non-null and Paho reports connected).
+     * @note  Thread-safe.  Safe to call from any thread.
+     */
+    inline bool __is_connected_safe() const noexcept
+    {
+        MQTTAsync hdl = nullptr;
+        {
+            std::lock_guard<std::mutex> locker(mtx_);
+            hdl = native_cli_;
+        }
+        return hdl && MQTTAsync_isConnected(hdl);
+    }
+
 protected:
     int  on_message_arrived(char* _topic_name, int _topic_len, MQTTAsync_message* _message);
     void on_delivery_complete(MQTTAsync_token _token);
@@ -338,7 +361,6 @@ protected:
     //mgpp::err __set_auto_reconnect(bool _b);
     inline constexpr bool __auto_reconnect_enable() const noexcept { return conn_opts_.raw().automaticReconnect != 0; }
 
-    inline bool __auto_reconn_hdl_running_st() const noexcept { return auto_reconn_hdl_running_; }
     inline bool __auto_reconn_hdl_running_mt() const noexcept
     {
         //std::unique_lock<std::mutex> locker(mtx_);
@@ -578,14 +600,17 @@ uvbasic_client::~uvbasic_client()
  */
 inline mgpp::err uvbasic_client::set_conn_opts(const connect_options& _opts)
 {
-    std::unique_lock<std::mutex> locker(mtx_);
-    
-    if (native_cli_ && MQTTAsync_isConnected(native_cli_))
+    // CR-1 fix: check connected OUTSIDE mtx_ to avoid ABBA deadlock.
+    // __is_connected_safe() copies native_cli_ under mtx_, releases the lock,
+    // then calls MQTTAsync_isConnected() — so Paho's internal mqttasync_mutex
+    // is never contended with our mtx_ in opposite order.
+    if (__is_connected_safe())
         return mgpp::err{ MGEC__PERM, "already connected" };
     
-    if (__auto_reconn_hdl_running_st())
+    if (__auto_reconn_hdl_running_mt())
         return mgpp::err{ MGEC__PERM, "auto reconnect is running" };
     
+    std::unique_lock<std::mutex> locker(mtx_);
     conn_opts_.assign(_opts);
     
     // F-N2 fix: Re-inject SSL error/PSK callbacks that may have been
@@ -624,14 +649,14 @@ inline mgpp::err uvbasic_client::set_conn_opts(const connect_options& _opts)
  */
 inline mgpp::err uvbasic_client::set_disconn_opts(const disconnect_options& _opts)
 {
-    std::unique_lock<std::mutex> locker(mtx_);
-
-    if (native_cli_ && MQTTAsync_isConnected(native_cli_))
+    // CR-1 fix: check connected OUTSIDE mtx_ (same rationale as set_conn_opts).
+    if (__is_connected_safe())
         return mgpp::err{ MGEC__PERM, "already connected" };
 
-    if (__auto_reconn_hdl_running_st())
+    if (__auto_reconn_hdl_running_mt())
         return mgpp::err{ MGEC__PERM, "auto reconnect is running" };
 
+    std::unique_lock<std::mutex> locker(mtx_);
     disconn_opts_.assign(_opts);
     return {};
 }
@@ -677,12 +702,18 @@ inline mgpp::err uvbasic_client::connect()
     if (disconnect_requested_.load(std::memory_order_acquire))
         return mgpp::err{ MGEC__INPROGRESS, "a disconnect is in progress, retry later" };
 
-    if (MQTTAsync_isConnected(native_cli_))
+    // CR-1 fix: unlock mtx_ BEFORE the Paho isConnected check.  Holding
+    // mtx_ across MQTTAsync_isConnected() creates an ABBA deadlock risk
+    // with Paho callback threads (see __is_connected_safe() doc).
+    // __auto_reconn_hdl_running_mt() reads an atomic bool so it does not
+    // require mtx_ protection.
+    locker.unlock();
+
+    if (__is_connected_safe())
         return {};
     
-    if (__auto_reconn_hdl_running_st())
+    if (__auto_reconn_hdl_running_mt())
         return mgpp::err{ MGEC__INPROGRESS, "auto reconnect is running" };
-    locker.unlock();
     
     // Reset backoff and reconnect-wait flag for fresh user-initiated connect.
     // Clearing wait_conn_restored_ prevents a spurious reconnected_cb_ when
@@ -785,7 +816,7 @@ inline mgpp::err uvbasic_client::disconnect()
     // Per libuv docs (design.rst), the event loop and handles are NOT thread-safe
     // except where stated otherwise; uv_async_send is the only API confirmed safe
     // from any thread.
-    if (__auto_reconn_hdl_running_st())
+    if (__auto_reconn_hdl_running_mt())
         __set_auto_reconn_hdl_running_st(false);
 
     {
@@ -857,7 +888,10 @@ inline mgpp::err uvbasic_client::send_message(const memepp::string& _destination
         _log(log_level::trace, "uvbasic_client({})::send_message | topic={}",
             create_opts_.client_id(), _destination_name.data());
     _opts.context = this;
-    if (create_opts_.raw().MQTTVersion < MQTTVERSION_5)
+    // CR-2 fix: use conn_opts_ (actual connection version) instead of
+    // create_opts_ (always MQTTVERSION_DEFAULT).  The MQTT protocol version
+    // is determined by the connect() call, not by create options.
+    if (conn_opts_.raw().MQTTVersion < MQTTVERSION_5)
     {
         _opts.onSuccess = __on_publish_success;
         _opts.onFailure = __on_publish_failure;
@@ -908,7 +942,10 @@ inline mgpp::err uvbasic_client::subscribe(const memepp::string& _topic, int _qo
         _log(log_level::trace, "uvbasic_client({})::subscribe | topic={} qos={}",
             create_opts_.client_id(), _topic.data(), _qos);
     _opts.context = this;
-    if (create_opts_.raw().MQTTVersion < MQTTVERSION_5)
+    // CR-2 fix: use conn_opts_ (actual connection version) instead of
+    // create_opts_ (always MQTTVERSION_DEFAULT).  The MQTT protocol version
+    // is determined by the connect() call, not by create options.
+    if (conn_opts_.raw().MQTTVersion < MQTTVERSION_5)
     {
         _opts.onSuccess = __on_subscribe_success;
         _opts.onFailure = __on_subscribe_failure;
@@ -958,7 +995,10 @@ inline mgpp::err uvbasic_client::unsubscribe(const memepp::string& _topic, MQTTA
         _log(log_level::trace, "uvbasic_client({})::unsubscribe | topic={}",
             create_opts_.client_id(), _topic.data());
     _opts.context = this;
-    if (create_opts_.raw().MQTTVersion < MQTTVERSION_5)
+    // CR-2 fix: use conn_opts_ (actual connection version) instead of
+    // create_opts_ (always MQTTVERSION_DEFAULT).  The MQTT protocol version
+    // is determined by the connect() call, not by create options.
+    if (conn_opts_.raw().MQTTVersion < MQTTVERSION_5)
     {
         _opts.onSuccess = __on_unsubscribe_success;
         _opts.onFailure = __on_unsubscribe_failure;
@@ -1155,12 +1195,9 @@ inline void uvbasic_client::set_log_level(log_level _level)
  */
 inline void uvbasic_client::set_log_callback(const log_callback& _cb)
 {
-    std::unique_lock<std::mutex> locker(mtx_);
-    if (native_cli_) {
-        if (MQTTAsync_isConnected(native_cli_))
-            return;
-    }
-    locker.unlock();
+    // CR-1 fix: read native_cli_ under mtx_, then check outside lock
+    if (__is_connected_safe())
+        return;
     log_cb_ = _cb;
 }
 
@@ -1178,14 +1215,13 @@ inline void uvbasic_client::set_log_callback(const log_callback& _cb)
  */
 inline void uvbasic_client::set_message_arrived_callback(const message_arrived_callback& _cb) 
 {
-    std::unique_lock<std::mutex> locker(mtx_);
-    if (native_cli_) {
-        if (MQTTAsync_isConnected(native_cli_))
-            return;
-    }
-    if (__auto_reconn_hdl_running_st())
+    // CR-1 fix: use __is_connected_safe() which releases mtx_ before
+    // calling MQTTAsync_isConnected(), avoiding ABBA deadlock.
+    if (__is_connected_safe())
         return;
-    locker.unlock();
+
+    if (__auto_reconn_hdl_running_mt())
+        return;
     message_arrived_cb_ = _cb;
 }
 
@@ -1203,14 +1239,13 @@ inline void uvbasic_client::set_message_arrived_callback(const message_arrived_c
  */
 inline void uvbasic_client::set_delivery_complete_callback(const delivery_complete_callback& _cb)
 {
-    std::unique_lock<std::mutex> locker(mtx_);
-    if (native_cli_) {
-        if (MQTTAsync_isConnected(native_cli_))
-            return;
-    }
-    if (__auto_reconn_hdl_running_st())
+    // CR-1 fix: use __is_connected_safe() which releases mtx_ before
+    // calling MQTTAsync_isConnected(), avoiding ABBA deadlock.
+    if (__is_connected_safe())
         return;
-    locker.unlock();
+
+    if (__auto_reconn_hdl_running_mt())
+        return;
     delivery_complete_cb_ = _cb;
 }
 
@@ -1228,15 +1263,13 @@ inline void uvbasic_client::set_delivery_complete_callback(const delivery_comple
  */
 inline void uvbasic_client::set_connect_lost_callback(const connect_lost_callback& _cb)
 {
-    std::unique_lock<std::mutex> locker(mtx_);
-    if (native_cli_) {
-        if (MQTTAsync_isConnected(native_cli_))
-            return;
-    }
-
-    if (__auto_reconn_hdl_running_st())
+    // CR-1 fix: use __is_connected_safe() which releases mtx_ before
+    // calling MQTTAsync_isConnected(), avoiding ABBA deadlock.
+    if (__is_connected_safe())
         return;
-    locker.unlock();
+
+    if (__auto_reconn_hdl_running_mt())
+        return;
     connect_lost_cb_ = _cb;
 }
 
@@ -1254,15 +1287,13 @@ inline void uvbasic_client::set_connect_lost_callback(const connect_lost_callbac
  */
 inline void uvbasic_client::set_connected_callback(const connected_callback& _cb)
 {
-    std::unique_lock<std::mutex> locker(mtx_);
-    if (native_cli_) {
-        if (MQTTAsync_isConnected(native_cli_))
-            return;
-    }
-
-    if (__auto_reconn_hdl_running_st())
+    // CR-1 fix: use __is_connected_safe() which releases mtx_ before
+    // calling MQTTAsync_isConnected(), avoiding ABBA deadlock.
+    if (__is_connected_safe())
         return;
-    locker.unlock();
+
+    if (__auto_reconn_hdl_running_mt())
+        return;
     connected_cb_ = _cb;
 }
 
@@ -1280,15 +1311,13 @@ inline void uvbasic_client::set_connected_callback(const connected_callback& _cb
  */
 inline void uvbasic_client::set_disconnected_callback(const disconnected_callback& _cb)
 {
-    std::unique_lock<std::mutex> locker(mtx_);
-    if (native_cli_) {
-        if (MQTTAsync_isConnected(native_cli_))
-            return;
-    }
-
-    if (__auto_reconn_hdl_running_st())
+    // CR-1 fix: use __is_connected_safe() which releases mtx_ before
+    // calling MQTTAsync_isConnected(), avoiding ABBA deadlock.
+    if (__is_connected_safe())
         return;
-    locker.unlock();
+
+    if (__auto_reconn_hdl_running_mt())
+        return;
     disconnected_cb_ = _cb;
 }
 
@@ -1306,15 +1335,13 @@ inline void uvbasic_client::set_disconnected_callback(const disconnected_callbac
  */
 inline void uvbasic_client::set_reconnected_callback(const reconnected_callback& _cb)
 {
-    std::unique_lock<std::mutex> locker(mtx_);
-    if (native_cli_) {
-        if (MQTTAsync_isConnected(native_cli_))
-            return;
-    }
-
-    if (__auto_reconn_hdl_running_st())
+    // CR-1 fix: use __is_connected_safe() which releases mtx_ before
+    // calling MQTTAsync_isConnected(), avoiding ABBA deadlock.
+    if (__is_connected_safe())
         return;
-    locker.unlock();
+
+    if (__auto_reconn_hdl_running_mt())
+        return;
     reconnected_cb_ = _cb;
 }
 
@@ -1332,14 +1359,13 @@ inline void uvbasic_client::set_reconnected_callback(const reconnected_callback&
  */
 inline void uvbasic_client::set_reconnect_stalled_callback(const reconnect_stalled_callback& _cb)
 {
-    std::unique_lock<std::mutex> locker(mtx_);
-    if (native_cli_) {
-        if (MQTTAsync_isConnected(native_cli_))
-            return;
-    }
-    if (__auto_reconn_hdl_running_st())
+    // CR-1 fix: use __is_connected_safe() which releases mtx_ before
+    // calling MQTTAsync_isConnected(), avoiding ABBA deadlock.
+    if (__is_connected_safe())
         return;
-    locker.unlock();
+
+    if (__auto_reconn_hdl_running_mt())
+        return;
     reconnect_stalled_cb_ = _cb;
 }
 
@@ -1406,15 +1432,13 @@ inline void uvbasic_client::set_failure_callback(const failure_callback& _cb)
  */
 inline void uvbasic_client::set_connect_success_callback(const connect_success_callback& _cb)
 {
-    std::unique_lock<std::mutex> locker(mtx_);
-    if (native_cli_) {
-        if (MQTTAsync_isConnected(native_cli_))
-            return;
-    }
-
-    if (__auto_reconn_hdl_running_st())
+    // CR-1 fix: use __is_connected_safe() which releases mtx_ before
+    // calling MQTTAsync_isConnected(), avoiding ABBA deadlock.
+    if (__is_connected_safe())
         return;
-    locker.unlock();
+
+    if (__auto_reconn_hdl_running_mt())
+        return;
     connect_success_cb_ = _cb;
 }
 
@@ -1428,15 +1452,13 @@ inline void uvbasic_client::set_connect_success_callback(const connect_success_c
  */
 inline void uvbasic_client::set_connect_failure_callback(const connect_failure_callback& _cb)
 {
-    std::unique_lock<std::mutex> locker(mtx_);
-    if (native_cli_) {
-        if (MQTTAsync_isConnected(native_cli_))
-            return;
-    }
-
-    if (__auto_reconn_hdl_running_st())
+    // CR-1 fix: use __is_connected_safe() which releases mtx_ before
+    // calling MQTTAsync_isConnected(), avoiding ABBA deadlock.
+    if (__is_connected_safe())
         return;
-    locker.unlock();
+
+    if (__auto_reconn_hdl_running_mt())
+        return;
     connect_failure_cb_ = _cb;
 }
 
@@ -1450,15 +1472,13 @@ inline void uvbasic_client::set_connect_failure_callback(const connect_failure_c
  */
 inline void uvbasic_client::set_disconnect_success_callback(const disconnect_success_callback& _cb)
 {
-    std::unique_lock<std::mutex> locker(mtx_);
-    if (native_cli_) {
-        if (MQTTAsync_isConnected(native_cli_))
-            return;
-    }
-
-    if (__auto_reconn_hdl_running_st())
+    // CR-1 fix: use __is_connected_safe() which releases mtx_ before
+    // calling MQTTAsync_isConnected(), avoiding ABBA deadlock.
+    if (__is_connected_safe())
         return;
-    locker.unlock();
+
+    if (__auto_reconn_hdl_running_mt())
+        return;
     disconnect_success_cb_ = _cb;
 }
 
@@ -1472,15 +1492,13 @@ inline void uvbasic_client::set_disconnect_success_callback(const disconnect_suc
  */
 inline void uvbasic_client::set_disconnect_failure_callback(const disconnect_failure_callback& _cb)
 {
-    std::unique_lock<std::mutex> locker(mtx_);
-    if (native_cli_) {
-        if (MQTTAsync_isConnected(native_cli_))
-            return;
-    }
-
-    if (__auto_reconn_hdl_running_st())
+    // CR-1 fix: use __is_connected_safe() which releases mtx_ before
+    // calling MQTTAsync_isConnected(), avoiding ABBA deadlock.
+    if (__is_connected_safe())
         return;
-    locker.unlock();
+
+    if (__auto_reconn_hdl_running_mt())
+        return;
     disconnect_failure_cb_ = _cb;
 }
 
@@ -1494,15 +1512,13 @@ inline void uvbasic_client::set_disconnect_failure_callback(const disconnect_fai
  */
 inline void uvbasic_client::set_subscribe_success_callback(const subscribe_success_callback& _cb)
 {
-    std::unique_lock<std::mutex> locker(mtx_);
-    if (native_cli_) {
-        if (MQTTAsync_isConnected(native_cli_))
-            return;
-    }
-
-    if (__auto_reconn_hdl_running_st())
+    // CR-1 fix: use __is_connected_safe() which releases mtx_ before
+    // calling MQTTAsync_isConnected(), avoiding ABBA deadlock.
+    if (__is_connected_safe())
         return;
-    locker.unlock();
+
+    if (__auto_reconn_hdl_running_mt())
+        return;
     subscribe_success_cb_ = _cb;
 }
 
@@ -1516,15 +1532,13 @@ inline void uvbasic_client::set_subscribe_success_callback(const subscribe_succe
  */
 inline void uvbasic_client::set_subscribe_failure_callback(const subscribe_failure_callback& _cb)
 {
-    std::unique_lock<std::mutex> locker(mtx_);
-    if (native_cli_) {
-        if (MQTTAsync_isConnected(native_cli_))
-            return;
-    }
-
-    if (__auto_reconn_hdl_running_st())
+    // CR-1 fix: use __is_connected_safe() which releases mtx_ before
+    // calling MQTTAsync_isConnected(), avoiding ABBA deadlock.
+    if (__is_connected_safe())
         return;
-    locker.unlock();
+
+    if (__auto_reconn_hdl_running_mt())
+        return;
     subscribe_failure_cb_ = _cb;
 }
 
@@ -1538,15 +1552,13 @@ inline void uvbasic_client::set_subscribe_failure_callback(const subscribe_failu
  */
 inline void uvbasic_client::set_unsubscribe_success_callback(const unsubscribe_success_callback& _cb)
 {
-    std::unique_lock<std::mutex> locker(mtx_);
-    if (native_cli_) {
-        if (MQTTAsync_isConnected(native_cli_))
-            return;
-    }
-
-    if (__auto_reconn_hdl_running_st())
+    // CR-1 fix: use __is_connected_safe() which releases mtx_ before
+    // calling MQTTAsync_isConnected(), avoiding ABBA deadlock.
+    if (__is_connected_safe())
         return;
-    locker.unlock();
+
+    if (__auto_reconn_hdl_running_mt())
+        return;
     unsubscribe_success_cb_ = _cb;
 }
 
@@ -1560,15 +1572,13 @@ inline void uvbasic_client::set_unsubscribe_success_callback(const unsubscribe_s
  */
 inline void uvbasic_client::set_unsubscribe_failure_callback(const unsubscribe_failure_callback& _cb)
 {
-    std::unique_lock<std::mutex> locker(mtx_);
-    if (native_cli_) {
-        if (MQTTAsync_isConnected(native_cli_))
-            return;
-    }
-
-    if (__auto_reconn_hdl_running_st())
+    // CR-1 fix: use __is_connected_safe() which releases mtx_ before
+    // calling MQTTAsync_isConnected(), avoiding ABBA deadlock.
+    if (__is_connected_safe())
         return;
-    locker.unlock();
+
+    if (__auto_reconn_hdl_running_mt())
+        return;
     unsubscribe_failure_cb_ = _cb;
 }
 
@@ -1582,16 +1592,12 @@ inline void uvbasic_client::set_unsubscribe_failure_callback(const unsubscribe_f
  */
 inline void uvbasic_client::set_publish_success_callback(const publish_success_callback& _cb)
 {
-    std::unique_lock<std::mutex> locker(mtx_);
-    if (native_cli_) {
-        if (MQTTAsync_isConnected(native_cli_)) {
-            return;
-        }
-    }
-
-    if (__auto_reconn_hdl_running_st())
+    // CR-1 fix: read native_cli_ under mtx_, then check outside lock
+    if (__is_connected_safe())
         return;
-    locker.unlock();
+
+    if (__auto_reconn_hdl_running_mt())
+        return;
     publish_success_cb_ = _cb;
 }
 
@@ -1605,16 +1611,12 @@ inline void uvbasic_client::set_publish_success_callback(const publish_success_c
  */
 inline void uvbasic_client::set_publish_failure_callback(const publish_failure_callback& _cb)
 {
-    std::unique_lock<std::mutex> locker(mtx_);
-    if (native_cli_) {
-        if (MQTTAsync_isConnected(native_cli_)) {
-            return;
-        }
-    }
-
-    if (__auto_reconn_hdl_running_st())
+    // CR-1 fix: read native_cli_ under mtx_, then check outside lock
+    if (__is_connected_safe())
         return;
-    locker.unlock();
+
+    if (__auto_reconn_hdl_running_mt())
+        return;
     publish_failure_cb_ = _cb;
 }
 
@@ -1628,16 +1630,12 @@ inline void uvbasic_client::set_publish_failure_callback(const publish_failure_c
  */
 inline void uvbasic_client::set_ssl_error_callback(const ssl_error_callback& _cb)
 {
-    std::unique_lock<std::mutex> locker(mtx_);
-    if (native_cli_) {
-        if (MQTTAsync_isConnected(native_cli_)) {
-            return;
-        }
-    }
-
-    if (__auto_reconn_hdl_running_st())
+    // CR-1 fix: read native_cli_ under mtx_, then check outside lock
+    if (__is_connected_safe())
         return;
-    locker.unlock();
+
+    if (__auto_reconn_hdl_running_mt())
+        return;
     ssl_error_cb_ = _cb;
 }
 
@@ -1651,16 +1649,12 @@ inline void uvbasic_client::set_ssl_error_callback(const ssl_error_callback& _cb
  */
 inline void uvbasic_client::set_ssl_psk_callback(const ssl_psk_callback& _cb)
 {
-    std::unique_lock<std::mutex> locker(mtx_);
-    if (native_cli_) {
-        if (MQTTAsync_isConnected(native_cli_)) {
-            return;
-        }
-    }
-
-    if (__auto_reconn_hdl_running_st())
+    // CR-1 fix: read native_cli_ under mtx_, then check outside lock
+    if (__is_connected_safe())
         return;
-    locker.unlock();
+
+    if (__auto_reconn_hdl_running_mt())
+        return;
     ssl_psk_cb_ = _cb;
 }
 
@@ -2891,12 +2885,16 @@ inline void uvbasic_client::on_retry_connect_timer_call (uv_timer_t* _handle)
     if (!native_cli_)
         return;
 
-    if (MQTTAsync_isConnected(native_cli_))
+    // CR-1 fix: unlock mtx_ before calling MQTTAsync_isConnected().
+    // The cleanup lambda will re-acquire mtx_ if needed when we return
+    // early (locker.owns_lock() is checked inside the cleanup).
+    locker.unlock();
+
+    if (__is_connected_safe())
         return;
 
-    if (!__auto_reconn_hdl_running_st())
+    if (!__auto_reconn_hdl_running_mt())
         return;
-    locker.unlock();
 
     auto e = __connect_mt();
     if (e) {
@@ -2974,9 +2972,18 @@ inline void uvbasic_client::on_health_check_timer_call(uv_timer_t* _handle)
     // Plan D: Periodic health check — detect if Paho reconnected without
     // the wrapper noticing (e.g. callback race or internal state mismatch).
     {
-        std::unique_lock<std::mutex> locker(mtx_);
-        if (native_cli_ && MQTTAsync_isConnected(native_cli_))
+        // CR-1 fix: read native_cli_ under mtx_, then release the lock
+        // before calling MQTTAsync_isConnected().  Prevents ABBA deadlock
+        // with Paho callback threads (see __is_connected_safe() doc).
+        MQTTAsync hdl = nullptr;
         {
+            std::unique_lock<std::mutex> locker(mtx_);
+            hdl = native_cli_;
+        }
+        if (hdl && MQTTAsync_isConnected(hdl))
+        {
+            // Re-acquire mtx_ for state updates that must be atomic.
+            std::unique_lock<std::mutex> locker(mtx_);
             // Paho says we're connected — fix wrapper state
             wait_conn_restored_.store(false, std::memory_order_release);
             if (connect_status_.value.load(std::memory_order_acquire) == connect_status::connecting)
