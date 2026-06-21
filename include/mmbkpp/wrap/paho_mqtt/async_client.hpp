@@ -665,6 +665,9 @@ inline mgpp::err uvbasic_client::set_disconn_opts(const disconnect_options& _opt
  */
 inline mgpp::err uvbasic_client::connect()
 {
+    if (log_lvl_ <= log_level::trace)
+        _log(log_level::trace, "uvbasic_client({})::connect enter | status={} disc_req={}",
+            create_opts_.client_id(), static_cast<int>(connect_status_.value.load(std::memory_order_acquire)), disconnect_requested_.load(std::memory_order_acquire));
     std::unique_lock<std::mutex> locker(mtx_);
     if (!destroy_async_req_)
         return mgpp::err{ MGEC__INVALID_HANDLE, "invalid handle" };
@@ -726,6 +729,9 @@ inline mgpp::err uvbasic_client::connect()
         }
     }
 
+    if (log_lvl_ <= log_level::trace)
+        _log(log_level::trace, "uvbasic_client({})::connect exit | rc=0",
+            create_opts_.client_id());
     return {};
 }
 
@@ -770,6 +776,9 @@ inline mgpp::err uvbasic_client::disconnect()
     // Phase 1: Set the flag first — all async callbacks check this to change their behaviour
     disconnect_requested_.store(true, std::memory_order_release);
     wait_conn_restored_.store(false, std::memory_order_release);
+    if (log_lvl_ <= log_level::trace)
+        _log(log_level::trace, "uvbasic_client({})::disconnect enter | status={}",
+            create_opts_.client_id(), static_cast<int>(connect_status_.value.load(std::memory_order_acquire)));
 
     // Phase 2: Set the wrapper-layer flag synchronously (atomic, thread-safe),
     // then signal the event-loop thread to stop timers safely.
@@ -794,6 +803,9 @@ inline mgpp::err uvbasic_client::disconnect()
     if (cur == connect_status::disconnected)
     {
         // Idempotent — already disconnected
+        if (log_lvl_ <= log_level::trace)
+            _log(log_level::trace, "uvbasic_client({})::disconnect exit | idempotent (already disconnected)",
+                create_opts_.client_id());
         disconnect_requested_.store(false, std::memory_order_release);
         return {};
     }
@@ -801,6 +813,9 @@ inline mgpp::err uvbasic_client::disconnect()
     if (cur == connect_status::disconnecting)
     {
         // Already in progress
+        if (log_lvl_ <= log_level::trace)
+            _log(log_level::trace, "uvbasic_client({})::disconnect exit | already in progress",
+                create_opts_.client_id());
         return mgpp::err{ MGEC__ALREADY, "disconnect already in progress" };
     }
 
@@ -838,6 +853,9 @@ inline mgpp::err uvbasic_client::disconnect()
  */
 inline mgpp::err uvbasic_client::send_message(const memepp::string& _destination_name, const MQTTAsync_message& _msg, MQTTAsync_responseOptions& _opts)
 {
+    if (log_lvl_ <= log_level::trace)
+        _log(log_level::trace, "uvbasic_client({})::send_message | topic={}",
+            create_opts_.client_id(), _destination_name.data());
     _opts.context = this;
     if (create_opts_.raw().MQTTVersion < MQTTVERSION_5)
     {
@@ -886,6 +904,9 @@ inline mgpp::err uvbasic_client::send_message(const memepp::string& _destination
  */
 inline mgpp::err uvbasic_client::subscribe(const memepp::string& _topic, int _qos, MQTTAsync_responseOptions& _opts)
 {
+    if (log_lvl_ <= log_level::trace)
+        _log(log_level::trace, "uvbasic_client({})::subscribe | topic={} qos={}",
+            create_opts_.client_id(), _topic.data(), _qos);
     _opts.context = this;
     if (create_opts_.raw().MQTTVersion < MQTTVERSION_5)
     {
@@ -933,6 +954,9 @@ inline mgpp::err uvbasic_client::subscribe(const memepp::string& _topic, int _qo
  */
 inline mgpp::err uvbasic_client::unsubscribe(const memepp::string& _topic, MQTTAsync_responseOptions& _opts)
 {
+    if (log_lvl_ <= log_level::trace)
+        _log(log_level::trace, "uvbasic_client({})::unsubscribe | topic={}",
+            create_opts_.client_id(), _topic.data());
     _opts.context = this;
     if (create_opts_.raw().MQTTVersion < MQTTVERSION_5)
     {
@@ -1093,6 +1117,9 @@ inline mgpp::err uvbasic_client::init(uv_loop_t* _loop)
  */
 inline void uvbasic_client::destroy_request()
 {
+    if (log_lvl_ <= log_level::trace)
+        _log(log_level::trace, "uvbasic_client({})::destroy_request",
+            create_opts_.client_id());
     std::unique_lock<std::mutex> locker(mtx_);
     if (!destroy_async_req_)
         return;
@@ -1714,8 +1741,8 @@ inline void uvbasic_client::on_delivery_complete(MQTTAsync_token _token)
 inline void uvbasic_client::on_connect_lost(char* _cause)
 {
     if (log_lvl_ <= log_level::trace)
-        _log(log_level::trace, "uvbasic_client({})::on_connect_lost",
-            create_opts_.client_id());
+        _log(log_level::trace, "uvbasic_client({})::on_connect_lost | status={} disc_req={} wait_rest={} destroying={}",
+            create_opts_.client_id(), static_cast<int>(connect_status_.value.load(std::memory_order_acquire)), disconnect_requested_.load(std::memory_order_acquire), wait_conn_restored_.load(std::memory_order_acquire), destroying_.load(std::memory_order_acquire));
 
     if (disconnect_requested_.load(std::memory_order_acquire))
     {
@@ -1746,6 +1773,9 @@ inline void uvbasic_client::on_connect_lost(char* _cause)
             // shouldBeConnected is still 1 since user didn't call MQTTAsync_disconnect.
             // Update status to reflect that a reconnect attempt is in progress.
             connect_status_.value.store(connect_status::connecting, std::memory_order_release);
+            if (log_lvl_ <= log_level::trace)
+                _log(log_level::trace, "uvbasic_client({}) status ->connecting | caller=on_connect_lost",
+                    create_opts_.client_id());
         }
 
         // Start health-check timer for periodic reconnect-stalled notifications
@@ -1803,8 +1833,8 @@ inline void uvbasic_client::on_connect_lost(char* _cause)
 inline void uvbasic_client::on_connected(char* _cause)
 {
     if (log_lvl_ <= log_level::trace)
-        _log(log_level::trace, "uvbasic_client({})::on_connected",
-            create_opts_.client_id());
+        _log(log_level::trace, "uvbasic_client({})::on_connected | status={} disc_req={} wait_rest={} destroying={}",
+            create_opts_.client_id(), static_cast<int>(connect_status_.value.load(std::memory_order_acquire)), disconnect_requested_.load(std::memory_order_acquire), wait_conn_restored_.load(std::memory_order_acquire), destroying_.load(std::memory_order_acquire));
 
     if (disconnect_requested_.load(std::memory_order_acquire))
     {
@@ -2031,8 +2061,8 @@ inline void uvbasic_client::on_failure5(MQTTAsync_failureData5* _response)
 inline void uvbasic_client::on_connect_success(MQTTAsync_successData* _response)
 {
     if (log_lvl_ <= log_level::trace)
-        _log(log_level::trace, "uvbasic_client({})::on_connect_success",
-            create_opts_.client_id());
+        _log(log_level::trace, "uvbasic_client({})::on_connect_success | status={} disc_req={} wait_rest={} destroying={}",
+            create_opts_.client_id(), static_cast<int>(connect_status_.value.load(std::memory_order_acquire)), disconnect_requested_.load(std::memory_order_acquire), wait_conn_restored_.load(std::memory_order_acquire), destroying_.load(std::memory_order_acquire));
 
     if (disconnect_requested_.load(std::memory_order_acquire))
     {
@@ -2066,6 +2096,9 @@ inline void uvbasic_client::on_connect_success(MQTTAsync_successData* _response)
     }
 
     connect_status_.value.store(connect_status::connected, std::memory_order_release);
+    if (log_lvl_ <= log_level::trace)
+        _log(log_level::trace, "uvbasic_client({}) status ->connected | caller=on_connect_success",
+            create_opts_.client_id());
 
     // Reset backoff on successful connection
     retry_connect_backoff_ms_.store(1000, std::memory_order_release);
@@ -2099,8 +2132,8 @@ inline void uvbasic_client::on_connect_success(MQTTAsync_successData* _response)
 inline void uvbasic_client::on_connect_failure(MQTTAsync_failureData* _response)
 {
     if (log_lvl_ <= log_level::trace)
-        _log(log_level::trace, "uvbasic_client({})::on_connect_failure",
-            create_opts_.client_id());
+        _log(log_level::trace, "uvbasic_client({})::on_connect_failure | status={} disc_req={} wait_rest={} destroying={} code={}",
+            create_opts_.client_id(), static_cast<int>(connect_status_.value.load(std::memory_order_acquire)), disconnect_requested_.load(std::memory_order_acquire), wait_conn_restored_.load(std::memory_order_acquire), destroying_.load(std::memory_order_acquire), _response ? _response->code : -1);
 
     if (disconnect_requested_.load(std::memory_order_acquire))
     {
@@ -2166,8 +2199,8 @@ inline void uvbasic_client::on_connect_failure(MQTTAsync_failureData* _response)
 inline void uvbasic_client::on_connect_success5(MQTTAsync_successData5* _response)
 {
     if (log_lvl_ <= log_level::trace)
-        _log(log_level::trace, "uvbasic_client({})::on_connect_success5",
-            create_opts_.client_id());
+        _log(log_level::trace, "uvbasic_client({})::on_connect_success5 | status={} disc_req={} wait_rest={} destroying={}",
+            create_opts_.client_id(), static_cast<int>(connect_status_.value.load(std::memory_order_acquire)), disconnect_requested_.load(std::memory_order_acquire), wait_conn_restored_.load(std::memory_order_acquire), destroying_.load(std::memory_order_acquire));
 
     if (disconnect_requested_.load(std::memory_order_acquire))
     {
@@ -2199,6 +2232,9 @@ inline void uvbasic_client::on_connect_success5(MQTTAsync_successData5* _respons
     }
 
     connect_status_.value.store(connect_status::connected, std::memory_order_release);
+    if (log_lvl_ <= log_level::trace)
+        _log(log_level::trace, "uvbasic_client({}) status ->connected | caller=on_connect_success5",
+            create_opts_.client_id());
 
     // Reset backoff on successful connection
     retry_connect_backoff_ms_.store(1000, std::memory_order_release);
@@ -2219,8 +2255,8 @@ inline void uvbasic_client::on_connect_success5(MQTTAsync_successData5* _respons
 inline void uvbasic_client::on_connect_failure5(MQTTAsync_failureData5* _response)
 {
     if (log_lvl_ <= log_level::trace)
-        _log(log_level::trace, "uvbasic_client({})::on_connect_failure5",
-            create_opts_.client_id());
+        _log(log_level::trace, "uvbasic_client({})::on_connect_failure5 | status={} disc_req={} wait_rest={} destroying={} reasonCode={}",
+            create_opts_.client_id(), static_cast<int>(connect_status_.value.load(std::memory_order_acquire)), disconnect_requested_.load(std::memory_order_acquire), wait_conn_restored_.load(std::memory_order_acquire), destroying_.load(std::memory_order_acquire), _response ? static_cast<int>(_response->reasonCode) : -1);
 
     if (disconnect_requested_.load(std::memory_order_acquire))
     {
@@ -2282,8 +2318,8 @@ inline void uvbasic_client::on_connect_failure5(MQTTAsync_failureData5* _respons
 inline void uvbasic_client::on_disconnect_success(MQTTAsync_successData* _response)
 {
     if (log_lvl_ <= log_level::trace)
-        _log(log_level::trace, "uvbasic_client({})::on_disconnect_success",
-            create_opts_.client_id());
+        _log(log_level::trace, "uvbasic_client({})::on_disconnect_success | status={} disc_req={} wait_rest={} destroying={}",
+            create_opts_.client_id(), static_cast<int>(connect_status_.value.load(std::memory_order_acquire)), disconnect_requested_.load(std::memory_order_acquire), wait_conn_restored_.load(std::memory_order_acquire), destroying_.load(std::memory_order_acquire));
 
     connect_status_.value.store(connect_status::disconnected, std::memory_order_release);
     disconnect_requested_.store(false, std::memory_order_release);
@@ -2325,8 +2361,8 @@ inline void uvbasic_client::on_disconnect_failure(MQTTAsync_failureData* _respon
 inline void uvbasic_client::on_disconnect_success5(MQTTAsync_successData5* _response)
 {
     if (log_lvl_ <= log_level::trace)
-        _log(log_level::trace, "uvbasic_client({})::on_disconnect_success5",
-            create_opts_.client_id());
+        _log(log_level::trace, "uvbasic_client({})::on_disconnect_success5 | status={} disc_req={} wait_rest={} destroying={}",
+            create_opts_.client_id(), static_cast<int>(connect_status_.value.load(std::memory_order_acquire)), disconnect_requested_.load(std::memory_order_acquire), wait_conn_restored_.load(std::memory_order_acquire), destroying_.load(std::memory_order_acquire));
 
     connect_status_.value.store(connect_status::disconnected, std::memory_order_release);
     disconnect_requested_.store(false, std::memory_order_release);
@@ -2918,6 +2954,9 @@ inline void uvbasic_client::on_retry_connect_timer_close(uv_handle_t* _handle)
  */
 inline void uvbasic_client::on_health_check_timer_call(uv_timer_t* _handle)
 {
+    if (log_lvl_ <= log_level::trace)
+        _log(log_level::trace, "uvbasic_client({})::on_health_check_timer_call | status={} disc_req={} wait_rest={} destroying={}",
+            create_opts_.client_id(), static_cast<int>(connect_status_.value.load(std::memory_order_acquire)), disconnect_requested_.load(std::memory_order_acquire), wait_conn_restored_.load(std::memory_order_acquire), destroying_.load(std::memory_order_acquire));
     // Stop if a user-requested disconnect is in progress
     if (disconnect_requested_.load(std::memory_order_acquire))
     {
@@ -3077,6 +3116,9 @@ inline mgpp::err uvbasic_client::__connect_mt()
     if (connect_status_.value.load(std::memory_order_acquire) != connect_status::disconnected)
         return mgpp::err{ MGEC__ALREADY, "already connected or connecting" };
     connect_status_.value.store(connect_status::connecting, std::memory_order_release);
+    if (log_lvl_ <= log_level::trace)
+        _log(log_level::trace, "uvbasic_client({}) status ->connecting | caller=__connect_mt",
+            create_opts_.client_id());
 
     int rc = 0;
     if ((rc = MQTTAsync_connect(hdl, &conn_opts_.raw())) != MQTTASYNC_SUCCESS)
@@ -3133,6 +3175,9 @@ inline mgpp::err uvbasic_client::__disconnect_mt()
         return mgpp::err{ MGEC__ALREADY, "already disconnected" };
     }
     connect_status_.value.store(connect_status::disconnecting, std::memory_order_release);
+    if (log_lvl_ <= log_level::trace)
+        _log(log_level::trace, "uvbasic_client({}) status ->disconnecting | caller=__disconnect_mt",
+            create_opts_.client_id());
 
     int rc = 0;
     if ((rc = MQTTAsync_disconnect(hdl, &disconn_opts_.raw())) != MQTTASYNC_SUCCESS)
