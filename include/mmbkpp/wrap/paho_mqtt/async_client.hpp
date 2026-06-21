@@ -588,13 +588,21 @@ inline mgpp::err uvbasic_client::set_conn_opts(const connect_options& _opts)
     
     conn_opts_.assign(_opts);
     
-    //if (conn_opts_.raw().automaticReconnect != 0) 
-    //{
-    //    __set_auto_reconnect(true);
-    //}
-    //else {
-    //    __set_auto_reconnect(false);
-    //}
+    // F-N2 fix: Re-inject SSL error/PSK callbacks that may have been
+    // lost if set_conn_opts() created a new ssl_native_options internally
+    // (e.g. when the previous connection had no SSL configured).
+    // ssl_native_options::assign() copies user-visible fields (trustStore,
+    // keyStore, etc.) but does NOT copy ssl_error_cb, ssl_error_context,
+    // ssl_psk_cb, or ssl_psk_context — losing the callbacks registered
+    // by init().  Re-set them here so SSL error/PSK notifications are
+    // never silently dropped.
+    if (conn_opts_.ssl())
+    {
+        conn_opts_.ssl()->raw().ssl_error_cb = __on_ssl_error;
+        conn_opts_.ssl()->raw().ssl_error_context = this;
+        conn_opts_.ssl()->raw().ssl_psk_cb = __on_ssl_psk;
+        conn_opts_.ssl()->raw().ssl_psk_context = this;
+    }
     
     return {};
 }
@@ -2135,6 +2143,11 @@ inline void uvbasic_client::on_connect_failure(MQTTAsync_failureData* _response)
     else
     {
         connect_status_.value.store(connect_status::disconnected, std::memory_order_release);
+        // F-N4 fix: defensively clear wait_conn_restored_ to prevent a
+        // stale flag from causing a spurious reconnected_cb_ call if
+        // on_connected fires later.  Symmetric with on_connect_lost's
+        // no-auto-reconnect branch (line 1763).
+        wait_conn_restored_.store(false, std::memory_order_release);
     }
 
     if (connect_failure_cb_)
@@ -2248,6 +2261,8 @@ inline void uvbasic_client::on_connect_failure5(MQTTAsync_failureData5* _respons
     else
     {
         connect_status_.value.store(connect_status::disconnected, std::memory_order_release);
+        // F-N4 fix: defensively clear wait_conn_restored_ (see on_connect_failure).
+        wait_conn_restored_.store(false, std::memory_order_release);
     }
 
     if (connect_failure_cb_)
