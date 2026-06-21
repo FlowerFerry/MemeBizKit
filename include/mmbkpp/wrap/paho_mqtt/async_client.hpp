@@ -1670,7 +1670,13 @@ inline void uvbasic_client::on_connect_lost(char* _cause)
 
     if (disconnect_requested_.load(std::memory_order_acquire))
     {
-        // User requested disconnect; don't start reconnect, just notify
+        // User requested disconnect; don't start reconnect, just notify.
+        // Defensively clean up state in case on_disconnect_success never
+        // fires (e.g. TCP drop before DISCONNECT ACK arrives). Without
+        // this reset the client would be permanently stuck in
+        // "disconnecting" state with no automatic recovery path.
+        connect_status_.value.store(connect_status::disconnected, std::memory_order_release);
+        disconnect_requested_.store(false, std::memory_order_release);
         if (connect_lost_cb_)
             connect_lost_cb_(weak_from_this(), _cause);
         return;
