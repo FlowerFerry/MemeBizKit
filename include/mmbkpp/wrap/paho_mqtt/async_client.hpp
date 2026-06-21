@@ -609,7 +609,35 @@ inline mgpp::err uvbasic_client::set_conn_opts(const connect_options& _opts)
     
     if (__auto_reconn_hdl_running_mt())
         return mgpp::err{ MGEC__PERM, "auto reconnect is running" };
-    
+
+    // HI-1 fix: refuse modification while a connection attempt (including
+    // Paho's internal automaticReconnect) is in flight.  When Paho calls
+    // MQTTAsync_connect(), it stores our conn_opts_ raw pointer in its
+    // internal m->connect struct (shallow copy).  The ssl field in that
+    // struct points directly to ssl_opt_ inside conn_opts_.  On every
+    // auto-reconnect retry, Paho dereferences m->connect.ssl to deep-copy
+    // the SSL strings via MQTTStrdup() (MQTTAsync.c line ~800).
+    //
+    // If we call conn_opts_.assign() here — which may destroy the old
+    // ssl_opt_ unique_ptr — Paho's next retry reads freed memory:
+    //
+    //   m->connect.ssl  →  ssl_opt_.get()  →  [freed]  ← UAF crash
+    //
+    // Timeline:
+    //   T1  connect(SSL_A)               → Paho saves m->connect.ssl → &SSL_A
+    //   T2  network drops               → Paho starts auto-reconnect
+    //   T3  set_conn_opts(SSL_B)         → conn_opts_.assign() frees SSL_A
+    //   T4  Paho retries                 → reads m->connect.ssl → UAF
+    //
+    // connect_status_ transitions to connecting inside on_connect_lost
+    // (line ~1769) when automaticReconnect is nonzero, which covers both
+    // Paho internal and wrapper-driven reconnect.  Reading it without mtx_
+    // is safe because connect_status_.value is std::atomic.
+    if (connect_status_.value.load(std::memory_order_acquire) != connect_status::disconnected)
+        return mgpp::err{ MGEC__PERM,
+            "connect options cannot be modified while connecting; "
+            "disconnect and wait for the callback before changing options" };
+
     std::unique_lock<std::mutex> locker(mtx_);
     conn_opts_.assign(_opts);
     
