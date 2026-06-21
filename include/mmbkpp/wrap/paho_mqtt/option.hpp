@@ -835,11 +835,10 @@ namespace async {
         raw_conn_opt_ = _conn_opt.raw();
         success5_cb_backup_ = _conn_opt.success5_cb_backup_;
         failure5_cb_backup_ = _conn_opt.failure5_cb_backup_;
-        // Copy server_url_ and re-point raw_conn_opt_.serverURI to the local buffer.
-        // raw_conn_opt_ = _conn_opt.raw() copied the pointer value, which points
-        // to _conn_opt.server_url_.data() — a dangling reference after this call.
+        // Copy server_url_.  Note: MQTTAsync_connectOptions no longer has a
+        // single-server URI field (Paho ≥ 1.3.0); the server URI is authoritative
+        // from MQTTAsync_createWithOptions() at init time.
         server_url_ = _conn_opt.server_url_;
-        raw_conn_opt_.serverURI = server_url_.empty() ? nullptr : server_url_.data();
 
         if (_conn_opt.ssl())
             set_ssl(*_conn_opt.ssl());
