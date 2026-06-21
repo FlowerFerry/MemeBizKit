@@ -501,6 +501,10 @@ protected:
     std::atomic_int retry_connect_backoff_ms_{1000};
 
     std::atomic_bool health_check_timer_needs_start_{false};
+    // Set to true in on_destroy_async_call() before any uv_close(); all
+    // uv_async_send call sites must check this flag to avoid UB on a
+    // closing handle (F-01 fix).
+    std::atomic_bool destroying_{false};
     
 };
 
@@ -687,6 +691,12 @@ inline mgpp::err uvbasic_client::connect()
             locker.lock();
             if (retry_connect_async_req_)
             {
+                // F-01: if destroy is in progress, the handle may already be
+                // closing — uv_async_send on a closing handle is UB.
+                if (destroying_.load(std::memory_order_acquire)) {
+                    locker.unlock();
+                    return e;
+                }
                 __set_auto_reconn_hdl_running_st(true);
                 uv_async_send(retry_connect_async_req_.get());
                 locker.unlock();
@@ -765,7 +775,8 @@ inline mgpp::err uvbasic_client::disconnect()
         // Read retry_connect_async_cancel_ under mtx_ — on_retry_connect_cancel_close
         // may reset() it on the event-loop thread during destroy (see NEW-2).
         std::unique_lock<std::mutex> locker(mtx_);
-        if (retry_connect_async_cancel_)
+        if (retry_connect_async_cancel_ &&
+            !destroying_.load(std::memory_order_acquire))  // F-01 fix: avoid UB on closing handle
             uv_async_send(retry_connect_async_cancel_.get());
     }
 
@@ -836,6 +847,11 @@ inline mgpp::err uvbasic_client::send_message(const memepp::string& _destination
         return mgpp::err{ MGEC__PERM, "client not created" };
     locker.unlock();
 
+    // Extend the object lifetime so that native_cli_ is not freed by
+    // a concurrent on_destroy() between the unlock and the Paho call
+    // (F-05 fix).
+    auto self = self_;
+
     int rc = 0;
     if ((rc = MQTTAsync_sendMessage(hdl, _destination_name.data(), &_msg, &_opts)) != MQTTASYNC_SUCCESS)
     {
@@ -879,6 +895,11 @@ inline mgpp::err uvbasic_client::subscribe(const memepp::string& _topic, int _qo
         return mgpp::err{ MGEC__PERM, "client not created" };
     locker.unlock();
 
+    // Extend the object lifetime so that native_cli_ is not freed by
+    // a concurrent on_destroy() between the unlock and the Paho call
+    // (F-05 fix).
+    auto self = self_;
+
     int rc = 0;
     if ((rc = MQTTAsync_subscribe(hdl, _topic.data(), _qos, &_opts)) != MQTTASYNC_SUCCESS)
     {
@@ -920,6 +941,11 @@ inline mgpp::err uvbasic_client::unsubscribe(const memepp::string& _topic, MQTTA
     if (!hdl)
         return mgpp::err{ MGEC__PERM, "client not created" };
     locker.unlock();
+
+    // Extend the object lifetime so that native_cli_ is not freed by
+    // a concurrent on_destroy() between the unlock and the Paho call
+    // (F-05 fix).
+    auto self = self_;
 
     int rc = 0;
     if ((rc = MQTTAsync_unsubscribe(hdl, _topic.data(), &_opts)) != MQTTASYNC_SUCCESS)
@@ -978,11 +1004,16 @@ inline mgpp::err uvbasic_client::init(uv_loop_t* _loop)
         [&handle]() { MQTTAsync_destroy(&handle); }
     );
 
-    rc = MQTTAsync_setMessageArrivedCallback(handle, this, __on_message_arrived);
+    // MQTTAsync_setCallbacks registers connectionLost, messageArrived,
+    // AND deliveryComplete in one call — the two separate set* calls used
+    // previously (setMessageArrivedCallback + setConnectionLostCallback)
+    // did NOT set deliveryComplete (F-02 fix).
+    rc = MQTTAsync_setCallbacks(handle, this, __on_connect_lost,
+                                __on_message_arrived, __on_delivery_complete);
     if (rc != MQTTASYNC_SUCCESS) {
-        return mgpp::err{ MGEC__ERR, rc, "MQTTAsync_setMessageArrivedCallback failed" };
+        return mgpp::err{ MGEC__ERR, rc, "MQTTAsync_setCallbacks failed" };
     }
-    
+
     rc = MQTTAsync_setConnected(handle, this, __on_connected);
     if (rc != MQTTASYNC_SUCCESS) {
         return mgpp::err{ MGEC__ERR, rc, "MQTTAsync_setConnected failed" };
@@ -993,11 +1024,17 @@ inline mgpp::err uvbasic_client::init(uv_loop_t* _loop)
         return mgpp::err{ MGEC__ERR, rc, "MQTTAsync_setDisconnected failed" };
     }
 
-    rc = MQTTAsync_setConnectionLostCallback(handle, this, __on_connect_lost);
-    if (rc != MQTTASYNC_SUCCESS) {
-        return mgpp::err{ MGEC__ERR, rc, "MQTTAsync_setConnectionLostCallback failed" };
+    // Wire SSL error and PSK callbacks into Paho's SSL options struct
+    // (F-03 fix).  These fields were never set before, so Paho would
+    // never invoke the user-installed SSL error/PSK callbacks.
+    if (conn_opts_.ssl())
+    {
+        conn_opts_.ssl()->raw().ssl_error_cb = __on_ssl_error;
+        conn_opts_.ssl()->raw().ssl_error_context = this;
+        conn_opts_.ssl()->raw().ssl_psk_cb = __on_ssl_psk;
+        conn_opts_.ssl()->raw().ssl_psk_context = this;
     }
-    
+
     handle_counter_.set_count(nullmtx_, 5);
 
     auto destroy_async_hdl = std::make_unique<uv_async_t>();
@@ -1050,6 +1087,10 @@ inline void uvbasic_client::destroy_request()
 {
     std::unique_lock<std::mutex> locker(mtx_);
     if (!destroy_async_req_)
+        return;
+    // F-01: after on_destroy_async_call sets destroying_ and calls uv_close(),
+    // the handle is closing — uv_async_send on a closing handle is UB.
+    if (destroying_.load(std::memory_order_acquire))
         return;
     uv_async_send(destroy_async_req_.get());
 }
@@ -1710,7 +1751,8 @@ inline void uvbasic_client::on_connect_lost(char* _cause)
         health_check_timer_needs_start_.store(true, std::memory_order_release);
         {
             std::unique_lock<std::mutex> locker(mtx_);
-            if (retry_connect_async_cancel_)
+            if (retry_connect_async_cancel_ &&
+                !destroying_.load(std::memory_order_acquire))  // F-01 fix
                 uv_async_send(retry_connect_async_cancel_.get());
         }
     }
@@ -1774,13 +1816,17 @@ inline void uvbasic_client::on_connected(char* _cause)
             // internal thread, while on_destroy() may concurrently write
             // native_cli_ = nullptr under mtx_.
             MQTTAsync hdl;
+            MQTTAsync_disconnectOptions disconn_opts_copy;
             {
                 std::unique_lock<std::mutex> locker(mtx_);
                 hdl = native_cli_;
+                // Snapshot disconn_opts_ under the lock to avoid a data race
+                // with set_disconn_opts() on a user thread (F-04 fix).
+                disconn_opts_copy = disconn_opts_.raw();
             }
             if (hdl)
             {
-                int rc = MQTTAsync_disconnect(hdl, &disconn_opts_.raw());
+                int rc = MQTTAsync_disconnect(hdl, &disconn_opts_copy);
                 if (rc != MQTTASYNC_SUCCESS)
                 {
                     // Paho returned a synchronous error (e.g. MQTTASYNC_DISCONNECTED
@@ -1802,7 +1848,8 @@ inline void uvbasic_client::on_connected(char* _cause)
         // is not thread-safe and this callback runs on Paho's internal thread.
         {
             std::unique_lock<std::mutex> locker(mtx_);
-            if (retry_connect_async_cancel_)
+            if (retry_connect_async_cancel_ &&
+                !destroying_.load(std::memory_order_acquire))  // F-01 fix
                 uv_async_send(retry_connect_async_cancel_.get());
         }
 
@@ -1986,13 +2033,17 @@ inline void uvbasic_client::on_connect_success(MQTTAsync_successData* _response)
         // Lock to safely read native_cli_ — this callback runs on Paho's internal thread,
         // while on_destroy() may concurrently write native_cli_ = nullptr under mtx_.
         MQTTAsync hdl;
+        MQTTAsync_disconnectOptions disconn_opts_copy;
         {
             std::unique_lock<std::mutex> locker(mtx_);
             hdl = native_cli_;
+            // Snapshot disconn_opts_ under the lock to avoid a data race
+            // with set_disconn_opts() on a user thread (F-04 fix).
+            disconn_opts_copy = disconn_opts_.raw();
         }
         if (hdl)
         {
-            int rc = MQTTAsync_disconnect(hdl, &disconn_opts_.raw());
+            int rc = MQTTAsync_disconnect(hdl, &disconn_opts_copy);
             if (rc != MQTTASYNC_SUCCESS)
             {
                 // Paho returned a synchronous error (e.g. MQTTASYNC_DISCONNECTED because
@@ -2076,7 +2127,8 @@ inline void uvbasic_client::on_connect_failure(MQTTAsync_failureData* _response)
         health_check_timer_needs_start_.store(true, std::memory_order_release);
         {
             std::unique_lock<std::mutex> locker(mtx_);
-            if (retry_connect_async_cancel_)
+            if (retry_connect_async_cancel_ &&
+                !destroying_.load(std::memory_order_acquire))  // F-01 fix
                 uv_async_send(retry_connect_async_cancel_.get());
         }
     }
@@ -2110,13 +2162,17 @@ inline void uvbasic_client::on_connect_success5(MQTTAsync_successData5* _respons
         // Lock to safely read native_cli_ — this callback runs on Paho's internal thread,
         // while on_destroy() may concurrently write native_cli_ = nullptr under mtx_.
         MQTTAsync hdl;
+        MQTTAsync_disconnectOptions disconn_opts_copy;
         {
             std::unique_lock<std::mutex> locker(mtx_);
             hdl = native_cli_;
+            // Snapshot disconn_opts_ under the lock to avoid a data race
+            // with set_disconn_opts() on a user thread (F-04 fix).
+            disconn_opts_copy = disconn_opts_.raw();
         }
         if (hdl)
         {
-            int rc = MQTTAsync_disconnect(hdl, &disconn_opts_.raw());
+            int rc = MQTTAsync_disconnect(hdl, &disconn_opts_copy);
             if (rc != MQTTASYNC_SUCCESS)
             {
                 // Paho returned a synchronous error (e.g. MQTTASYNC_DISCONNECTED because
@@ -2184,7 +2240,8 @@ inline void uvbasic_client::on_connect_failure5(MQTTAsync_failureData5* _respons
         health_check_timer_needs_start_.store(true, std::memory_order_release);
         {
             std::unique_lock<std::mutex> locker(mtx_);
-            if (retry_connect_async_cancel_)
+            if (retry_connect_async_cancel_ &&
+                !destroying_.load(std::memory_order_acquire))  // F-01 fix
                 uv_async_send(retry_connect_async_cancel_.get());
         }
     }
@@ -2545,9 +2602,10 @@ inline unsigned int uvbasic_client::on_ssl_psk(const char* _hint, char* _identit
  *
  * Closes all libuv handles in sequence:
  *   1. Closes the destroy async handle itself (uv_close with callback).
- *   2. Stops and closes retry_connect_timer_.
- *   3. Stops and closes health_check_timer_.
- *   4. Under mtx_: closes retry_connect_async_req_ and retry_connect_async_cancel_.
+ *   2. Under mtx_: closes retry_connect_async_req_ and retry_connect_async_cancel_
+ *      FIRST to block any pending uv_async_send from reaching callbacks
+ *      that would operate on timer handles (F-07 fix).
+ *   3. Stops and closes retry_connect_timer_ and health_check_timer_.
  *
  * Each close callback decrements handle_counter_.  When it reaches 0,
  * on_destroy() is invoked.
@@ -2563,18 +2621,17 @@ inline void uvbasic_client::on_destroy_async_call(uv_async_t* _handle)
         _log(log_level::trace, "uvbasic_client({})::on_destroy_async_call",
             create_opts_.client_id());
 
+    // Set the atomic flag BEFORE any uv_close() so that concurrent
+    // uv_async_send calls on other threads see the flag and bail out
+    // instead of calling uv_async_send on a closing handle (F-01 fix).
+    destroying_.store(true, std::memory_order_release);
+
     uv_close(reinterpret_cast<uv_handle_t*>(_handle), __on_destroy_async_close);
 
-    if (retry_connect_timer_) {
-        uv_timer_stop(retry_connect_timer_.get());
-        uv_close(reinterpret_cast<uv_handle_t*>(retry_connect_timer_.get()), __on_retry_connect_timer_close);
-    }
-
-    if (health_check_timer_) {
-        uv_timer_stop(health_check_timer_.get());
-        uv_close(reinterpret_cast<uv_handle_t*>(health_check_timer_.get()), __on_health_check_timer_close);
-    }
-
+    // F-07 fix: close async handles FIRST (under mtx_) to block any pending
+    // uv_async_send from reaching cancel/retry callbacks.  Only then close
+    // timer handles — preventing a use-after-close where a pending cancel
+    // callback would uv_timer_start() on an already-closing timer.
     std::unique_lock<std::mutex> locker(mtx_);
     if (retry_connect_async_req_)
     {
@@ -2584,6 +2641,17 @@ inline void uvbasic_client::on_destroy_async_call(uv_async_t* _handle)
     if (retry_connect_async_cancel_)
     {
         uv_close(reinterpret_cast<uv_handle_t*>(retry_connect_async_cancel_.get()), __on_retry_connect_cancel_close);
+    }
+    locker.unlock();
+
+    if (retry_connect_timer_) {
+        uv_timer_stop(retry_connect_timer_.get());
+        uv_close(reinterpret_cast<uv_handle_t*>(retry_connect_timer_.get()), __on_retry_connect_timer_close);
+    }
+
+    if (health_check_timer_) {
+        uv_timer_stop(health_check_timer_.get());
+        uv_close(reinterpret_cast<uv_handle_t*>(health_check_timer_.get()), __on_health_check_timer_close);
     }
 
     //if (MQTTAsync_isConnected(native_cli_)) {
@@ -2696,7 +2764,12 @@ inline void uvbasic_client::on_retry_connect_cancel_call(uv_async_t* _handle)
     // Start the health-check timer if delegated from a Paho callback.
     // uv_timer_start is NOT thread-safe; this callback runs on the event-loop
     // thread, so it is safe to start the timer here.
-    if (health_check_timer_needs_start_.load(std::memory_order_acquire))
+    // F-06 fix: also check disconnect_requested_ — if the user called
+    // disconnect() and its uv_async_send merged with a Paho callback's
+    // uv_async_send that set health_check_timer_needs_start_=true, we
+    // must not start the health-check timer (disconnect() stopped it).
+    if (health_check_timer_needs_start_.load(std::memory_order_acquire) &&
+        !disconnect_requested_.load(std::memory_order_acquire))
     {
         health_check_timer_needs_start_.store(false, std::memory_order_release);
         if (health_check_timer_)
