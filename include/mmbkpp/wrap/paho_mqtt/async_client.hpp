@@ -2198,16 +2198,15 @@ inline void uvbasic_client::on_connect_failure(MQTTAsync_failureData* _response)
 
     if (conn_opts_.raw().automaticReconnect != 0)
     {
-        // If connect_status_ is already connecting, user called connect()
-        // concurrently and a fresh connect is in flight.  Only set up
-        // reconnect tracking when we are NOT in that state, otherwise
-        // on_connected would misclassify the fresh connect as a
-        // Paho auto-reconnect recovery and spuriously fire reconnected_cb_.
-        auto st = connect_status_.value.load(std::memory_order_acquire);
-        if (st != connect_status::connecting)
-        {
-            wait_conn_restored_.store(true, std::memory_order_release);
-        }
+        // C2 fix: always set wait_conn_restored_ when Paho automaticReconnect
+        // is enabled.  Previously the if-guard below skipped this when
+        // connect_status_ was already 'connecting' — which happens on every
+        // first-connect failure because __connect_mt() sets it before calling
+        // MQTTAsync_connect().  Without this flag the health-check timer
+        // self-stops on its first tick (line ~3024: !wait_conn_restored_ →
+        // uv_timer_stop), leaving the user completely blind during Paho's
+        // silent retry phase.
+        wait_conn_restored_.store(true, std::memory_order_release);
 
         // Start health-check timer for periodic reconnect-stalled notifications
         // and MQTTAsync_isConnected polling (Plans B + D).
@@ -2319,16 +2318,15 @@ inline void uvbasic_client::on_connect_failure5(MQTTAsync_failureData5* _respons
 
     if (conn_opts_.raw().automaticReconnect != 0)
     {
-        // If connect_status_ is already connecting, user called connect()
-        // concurrently and a fresh connect is in flight.  Only set up
-        // reconnect tracking when we are NOT in that state, otherwise
-        // on_connected would misclassify the fresh connect as a
-        // Paho auto-reconnect recovery and spuriously fire reconnected_cb_.
-        auto st = connect_status_.value.load(std::memory_order_acquire);
-        if (st != connect_status::connecting)
-        {
-            wait_conn_restored_.store(true, std::memory_order_release);
-        }
+        // C2 fix: always set wait_conn_restored_ when Paho automaticReconnect
+        // is enabled.  Previously the if-guard below skipped this when
+        // connect_status_ was already 'connecting' — which happens on every
+        // first-connect failure because __connect_mt() sets it before calling
+        // MQTTAsync_connect().  Without this flag the health-check timer
+        // self-stops on its first tick (line ~3024: !wait_conn_restored_ →
+        // uv_timer_stop), leaving the user completely blind during Paho's
+        // silent retry phase.
+        wait_conn_restored_.store(true, std::memory_order_release);
 
         // Start health-check timer for periodic reconnect-stalled notifications
         // and MQTTAsync_isConnected polling (Plans B + D).
