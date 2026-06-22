@@ -270,7 +270,7 @@ public:
  * @return true if native_cli_ is non-null AND Paho reports connected.
  * @note Thread-safe.
  */
-    inline bool is_connected() const noexcept { auto hdl = native_mt(); return hdl && MQTTAsync_isConnected(hdl); }
+    inline bool is_connected() const noexcept { return __is_connected_safe(); }
 
     /**
      * @brief CR-1 fix: queries MQTTAsync_isConnected() WITHOUT holding mtx_.
@@ -287,6 +287,12 @@ public:
      */
     inline bool __is_connected_safe() const noexcept
     {
+        // A1 fix: if the destroy sequence has started, treat as not-connected.
+        // This prevents UAF on the Paho handle without holding mtx_ across the
+        // Paho API call (which would risk ABBA deadlock with Paho callbacks).
+        if (destroying_.load(std::memory_order_acquire))
+            return false;
+
         MQTTAsync hdl = nullptr;
         {
             std::lock_guard<std::mutex> locker(mtx_);
@@ -880,13 +886,42 @@ inline mgpp::err uvbasic_client::disconnect()
 
     if (cur == connect_status::connecting)
     {
-        // Paho's MQTTAsync_disconnect returns MQTTASYNC_DISCONNECTED when !connected,
-        // but it does NOT cancel the in-flight connect.  We just set the flag;
-        // on_connect_success / on_connect_failure will handle the remainder.
+        // C1 fix: Call MQTTAsync_disconnect() to set shouldBeConnected=0 in Paho,
+        // which stops Paho's internal startConnectRetry loop.  Without this call,
+        // Paho silently retries forever when onFailure has been nulled (after the
+        // first two failures), and disconnect_requested_ stays stuck with no
+        // callback path to clear it if the server is permanently unreachable.
+        // Even if Paho returns MQTTASYNC_DISCONNECTED (because !connected),
+        // the call has the critical side effect of stopping the retry cycle.
+        // Any in-flight connect will be handled by on_connect_success (which
+        // sees disconnect_requested_ and calls MQTTAsync_disconnect again).
         if (log_lvl_ <= log_level::trace)
             _log(log_level::trace,
-                "uvbasic_client({})::disconnect while connecting — waiting for connect callback",
+                "uvbasic_client({})::disconnect while connecting — stopping Paho reconnect",
                 create_opts_.client_id());
+
+        MQTTAsync hdl = nullptr;
+        MQTTAsync_disconnectOptions disconn_opts_copy;
+        {
+            std::unique_lock<std::mutex> locker(mtx_);
+            hdl = native_cli_;
+            // Snapshot disconn_opts_ under the lock to avoid data race
+            // with set_disconn_opts() on a user thread (F-04 pattern).
+            disconn_opts_copy = disconn_opts_.raw();
+        }
+        if (hdl)
+        {
+            int rc = MQTTAsync_disconnect(hdl, &disconn_opts_copy);
+            if (rc != MQTTASYNC_SUCCESS)
+            {
+                // Paho returned a synchronous error (e.g. MQTTASYNC_DISCONNECTED
+                // because m->c->connected==0).  No async callback will fire for
+                // the disconnect, so clear the flag here to prevent connect()
+                // from being permanently blocked.
+                connect_status_.value.store(connect_status::disconnected, std::memory_order_release);
+                disconnect_requested_.store(false, std::memory_order_release);
+            }
+        }
         return {};
     }
 
@@ -931,14 +966,13 @@ inline mgpp::err uvbasic_client::send_message(const memepp::string& _destination
 
     std::unique_lock<std::mutex> locker(mtx_);
     auto hdl = native_cli_;
+    // C4 fix: capture self_ under mtx_ to prevent data race with
+    // on_destroy()'s concurrent self_.reset() on the event-loop thread.
+    // std::shared_ptr copy is NOT thread-safe when concurrent with write.
+    auto self = self_;
     if (!hdl)
         return mgpp::err{ MGEC__PERM, "client not created" };
     locker.unlock();
-
-    // Extend the object lifetime so that native_cli_ is not freed by
-    // a concurrent on_destroy() between the unlock and the Paho call
-    // (F-05 fix).
-    auto self = self_;
 
     int rc = 0;
     if ((rc = MQTTAsync_sendMessage(hdl, _destination_name.data(), &_msg, &_opts)) != MQTTASYNC_SUCCESS)
@@ -985,14 +1019,12 @@ inline mgpp::err uvbasic_client::subscribe(const memepp::string& _topic, int _qo
 
     std::unique_lock locker(mtx_);
     auto hdl = native_cli_;
+    // C4 fix: capture self_ under mtx_ to prevent data race with
+    // on_destroy()'s concurrent self_.reset() on the event-loop thread.
+    auto self = self_;
     if (!hdl)
         return mgpp::err{ MGEC__PERM, "client not created" };
     locker.unlock();
-
-    // Extend the object lifetime so that native_cli_ is not freed by
-    // a concurrent on_destroy() between the unlock and the Paho call
-    // (F-05 fix).
-    auto self = self_;
 
     int rc = 0;
     if ((rc = MQTTAsync_subscribe(hdl, _topic.data(), _qos, &_opts)) != MQTTASYNC_SUCCESS)
@@ -1038,14 +1070,12 @@ inline mgpp::err uvbasic_client::unsubscribe(const memepp::string& _topic, MQTTA
         
     std::unique_lock locker(mtx_);
     auto hdl = native_cli_;
+    // C4 fix: capture self_ under mtx_ to prevent data race with
+    // on_destroy()'s concurrent self_.reset() on the event-loop thread.
+    auto self = self_;
     if (!hdl)
         return mgpp::err{ MGEC__PERM, "client not created" };
     locker.unlock();
-
-    // Extend the object lifetime so that native_cli_ is not freed by
-    // a concurrent on_destroy() between the unlock and the Paho call
-    // (F-05 fix).
-    auto self = self_;
 
     int rc = 0;
     if ((rc = MQTTAsync_unsubscribe(hdl, _topic.data(), &_opts)) != MQTTASYNC_SUCCESS)
@@ -3093,7 +3123,11 @@ inline void uvbasic_client::on_destroy()
             create_opts_.client_id());
     
     auto self = self_;
+    // C4 fix: self_.reset() must be under mtx_ to prevent data race with
+    // concurrent self_ reads in send_message/subscribe/unsubscribe
+    // (which now capture self_ under mtx_ per C4 fix).
     MEGOPP_UTIL__ON_SCOPE_CLEANUP([this] {
+        std::unique_lock<std::mutex> locker(mtx_);
         self_.reset();
     });
 
