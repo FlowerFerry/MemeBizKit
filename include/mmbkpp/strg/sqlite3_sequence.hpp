@@ -191,12 +191,20 @@ private:
             : index_id_(-1)
             , node_id_(-1)
             , is_readonly_(false)
+            , dbfile_status_(dbfile_status_t::ok)
         {}
 
         index_id_t index_id_;
         node_id_t  node_id_;
         bool is_readonly_;
         std::weak_ptr<sqlite3_sequence> seq_;
+        
+        // mutex to protect concurrent access
+        mutable std::mutex mtx_;
+        // persistent state for file operations when seq_ is expired
+        dbfile_status_t dbfile_status_;
+        memepp::string old_filepath_;
+        memepp::string new_filepath_;
     };
 
     struct __node_info 
@@ -528,7 +536,7 @@ inline mgpp::err sqlite3_sequence::set_dir_path_and_move(const memepp::string& _
         auto index_name = dir_iter->path().filename().string();
         auto index_iter = ghc::filesystem::directory_iterator(dir_iter->path(), ecode);
         auto index_end  = ghc::filesystem::directory_iterator();
-        auto index_id   = atoll(index_name.data());
+        auto index_id   = static_cast<index_id_t>(atoll(index_name.data()));
         if (ecode)
             continue;
 
@@ -581,7 +589,7 @@ inline mgpp::err sqlite3_sequence::set_dir_path_and_move(const memepp::string& _
             if (node_name_parts.size() != 3)
                 continue;
 
-            auto node_id = atoll(node_name_parts[1].to_string().data());
+            auto node_id = static_cast<node_id_t>(atoll(node_name_parts[1].to_string().data()));
 
             __node_info_sptr node_info;
             std::unique_lock<std::mutex> index_locker(index_info->mtx_);
@@ -614,6 +622,32 @@ inline mgpp::err sqlite3_sequence::set_dir_path_and_move(const memepp::string& _
                 
                 node_info->dbfile_status_ = dbfile_status_t::wait_for_move;
                 node_info->hdl_status_ = hdl_status_t::busy;
+                
+                // sync update __hdl_onclose_data for BOTH ro and rw handles
+                auto new_filepath = make_filepath(
+                    dir_path_, file_prefix_, file_suffix_,
+                    node_info->index_id__st(), node_info->node_id__st());
+                auto old_filepath = node_info->filepath__st();
+                
+                if (ro_hdl) {
+                    auto hdl_data = std::static_pointer_cast<__hdl_onclose_data>(ro_hdl->userdata());
+                    if (hdl_data) {
+                        std::lock_guard<std::mutex> data_lock(hdl_data->mtx_);
+                        hdl_data->dbfile_status_ = dbfile_status_t::wait_for_move;
+                        hdl_data->old_filepath_ = old_filepath;
+                        hdl_data->new_filepath_ = new_filepath;
+                    }
+                }
+                if (rw_hdl) {
+                    auto hdl_data = std::static_pointer_cast<__hdl_onclose_data>(rw_hdl->userdata());
+                    if (hdl_data) {
+                        std::lock_guard<std::mutex> data_lock(hdl_data->mtx_);
+                        hdl_data->dbfile_status_ = dbfile_status_t::wait_for_move;
+                        hdl_data->old_filepath_ = old_filepath;
+                        hdl_data->new_filepath_ = new_filepath;
+                    }
+                }
+                
                 node_locker.unlock();
                 
                 locker.lock();
@@ -789,7 +823,7 @@ inline mgpp::err sqlite3_sequence::copy_all_to_path(const memepp::string& _path)
         auto index_name = dir_iter->path().filename().string();
         auto index_iter = ghc::filesystem::directory_iterator(dir_iter->path(), ecode);
         auto index_end  = ghc::filesystem::directory_iterator();
-        auto index_id   = atoll(index_name.data());
+        auto index_id   = static_cast<index_id_t>(atoll(index_name.data()));
         if (ecode)
             return mgpp::into_err(ecode);
 
@@ -846,7 +880,7 @@ inline mgpp::err sqlite3_sequence::copy_all_to_path(const memepp::string& _path)
             if (node_name_parts.size() != 3)
                 continue;
 
-            auto node_id = atoll(node_name_parts[1].to_string().data());
+            auto node_id = static_cast<node_id_t>(atoll(node_name_parts[1].to_string().data()));
 
             __node_info_sptr node_info;
             std::unique_lock<std::mutex> index_locker(index_info->mtx_);
@@ -1254,21 +1288,25 @@ inline outcome::checked<sqlite3_hdl_sptr, mgpp::err>
     }
     cb_cleanup.cancel();
 
+    node_locker.lock();
+    node_info->set_hdl__st(_is_readonly, hdl_ret.value());
+    node_info->hdl_status_ = hdl_status_t::ok;
+    node_info->last_access_ts_ = mgu_timestamp_get();
+
     auto data  = std::make_shared<__hdl_onclose_data>();
     data->seq_ = shared_from_this();
     data->index_id_ = _index;
     data->node_id_  = _node;
     data->is_readonly_ = _is_readonly;
+    {
+        std::lock_guard<std::mutex> data_lock(data->mtx_);
+        data->dbfile_status_ = node_info->db_file_status__st();
+        data->old_filepath_ = node_info->filepath__st();
+    }
+    node_locker.unlock();
 
     hdl_ret.value()->set_userdata(data);
     hdl_ret.value()->set_close_cb(on_close_hdl);
-
-    node_locker.lock();
-    node_info->set_hdl__st(_is_readonly, hdl_ret.value());
-
-    node_info->hdl_status_ = hdl_status_t::ok;
-    node_info->last_access_ts_ = mgu_timestamp_get();
-    node_locker.unlock();
     
     locker.lock();
     opened_id_tuples_.push_back(std::make_tuple(_index, _node));
@@ -1420,7 +1458,7 @@ outcome::checked<sqlite3_sequence::count_t, mgpp::err>
             if (node_name_parts.size() != 3)
                 continue;
             
-            auto node_id = atoll(node_name_parts[1].to_string().data());
+            auto node_id = static_cast<node_id_t>(atoll(node_name_parts[1].to_string().data()));
 
             all_nodes[node_id].emplace(index_id);
             ++total_count;
@@ -1629,7 +1667,7 @@ outcome::checked<sqlite3_sequence::count_t, mgpp::err>
             if (node_name_parts.size() != 3)
                 continue;
             
-            auto node_id = atoll(node_name_parts[1].to_string().data());
+            auto node_id = static_cast<node_id_t>(atoll(node_name_parts[1].to_string().data()));
 
             if (node_id <= _less_than_node || node_id >= _more_than_node) 
             {
@@ -1892,7 +1930,7 @@ outcome::checked<sqlite3_sequence::count_t, mgpp::err>
             if (node_name_parts.size() != 3)
                 continue;
             
-            auto node_id = atoll(node_name_parts[1].to_string().data());
+            auto node_id = static_cast<node_id_t>(atoll(node_name_parts[1].to_string().data()));
             nodes[index_id].insert(node_id);
         }
     }
@@ -1999,12 +2037,31 @@ inline void sqlite3_sequence::on_close_hdl(const std::shared_ptr<void>& _userdat
 
     auto seq = data->seq_.lock();
     if (!seq) {
-        // TO_DO: 直接返回而不处理文件，可能导致文件泄漏（未移动/删除）。
+        // process file operations using persistent data when seq_ is expired
+        std::error_code ec;
+        dbfile_status_t db_status;
+        memepp::string old_filepath;
+        memepp::string new_filepath;
+        {
+            std::lock_guard<std::mutex> data_lock(data->mtx_);
+            db_status = data->dbfile_status_;
+            old_filepath = data->old_filepath_;
+            new_filepath = data->new_filepath_;
+        }
+        
+        if (db_status == dbfile_status_t::wait_for_remove) {
+            remove_sqlite_file(mm_to<memepp::native_string>(old_filepath), ec);
+        }
+        else if (db_status == dbfile_status_t::wait_for_move) {
+            rename_sqlite_file(
+                mm_to<memepp::native_string>(old_filepath),
+                mm_to<memepp::native_string>(new_filepath), ec);
+        }
         return;
     }
     
     auto new_filepath = seq->filepath(data->index_id_, data->node_id_);
-
+    
     std::unique_lock<std::mutex> locker(seq->mtx_);
     auto iit = seq->index_infos_.find(data->index_id_);
     if (iit == seq->index_infos_.end()) {
@@ -2032,15 +2089,15 @@ inline void sqlite3_sequence::on_close_hdl(const std::shared_ptr<void>& _userdat
         locker.lock();
         for (auto it = seq->old_nodes_.begin(); it != seq->old_nodes_.end(); )
         {
-            if ((*it)->index_id__st() != data->index_id_ ||
-                (*it)->node_id__st()  != data->node_id_)
+            // correct logic - find node where BOTH index_id AND node_id match
+            if ((*it)->index_id__st() == data->index_id_ && (*it)->node_id__st() == data->node_id_)
             {
-                ++it;
+                // Found matching node
+                old_nodes.push_back(*it);
+                it = seq->old_nodes_.erase(it);
                 continue;
             }
-            
-            old_nodes.push_back(*it);
-            it = seq->old_nodes_.erase(it);
+            ++it;  // Only increment if not found
         }
         locker.unlock();
 
@@ -2175,7 +2232,8 @@ inline void sqlite3_sequence::copy_sqlite_file(
     std::error_code ign;
     mghw_harddisk_freespace_t free_space = { sizeof(mghw_harddisk_freespace_t) };
     do {
-        if (mghw_get_harddisk_freespace_by_path(_to.string().c_str(), &free_space))
+        auto to = _to.string();
+        if (mghw_get_harddisk_freespace_by_path(to.c_str(), to.size(), &free_space))
             break;
         size_t total_size = 0;
         size_t file_size = 0;
@@ -2219,7 +2277,8 @@ inline void sqlite3_sequence::rename_sqlite_file(
     std::error_code ign;
     mghw_harddisk_freespace_t free_space = { sizeof(mghw_harddisk_freespace_t) };
     do {
-        if (mghw_get_harddisk_freespace_by_path(_to.string().c_str(), &free_space))
+        auto to = _to.string();
+        if (mghw_get_harddisk_freespace_by_path(to.c_str(), to.size(), &free_space))
             break;
         size_t total_size = 0;
         size_t file_size = 0;

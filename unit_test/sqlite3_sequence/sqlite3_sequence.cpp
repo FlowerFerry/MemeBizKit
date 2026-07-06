@@ -926,11 +926,149 @@ TEST_CASE("sqlite3_sequence - 17: try_checkpoint_idle_files functionality", "[sq
         REQUIRE(ret.has_error() == false);  // Succeeds but skips busy
 
         auto wal_path = mm_to<memepp::native_string>(seq->filepath(0, 3) + "-wal");
-        REQUIRE(ghc::filesystem::file_size(wal_path) > 0);  // Not checkpointed due to busy
-        hdl.reset();  // Release for cleanup
-    }
+                REQUIRE(ghc::filesystem::file_size(wal_path) > 0);  // Not checkpointed due to busy
+                hdl.reset();  // Release for cleanup
+            }
 
-    // Clean up test directory
-    seq.reset();
-    ghc::filesystem::remove_all(mm_to<memepp::native_string>(dir_path));
-}
+            // Clean up test directory
+            seq.reset();
+            ghc::filesystem::remove_all(mm_to<memepp::native_string>(dir_path));
+        }
+
+        // P1-6 test: verify file operations work when seq_ is expired
+        TEST_CASE("sqlite3_sequence - P1-6: file operations after seq destruction", "[sqlite3_sequence][P1-6]")
+        {
+            printf("sqlite3_sequence - P1-6: file operations after seq destruction\n");
+    
+            mmbkpp::strg::sqlite3_sequence::global_init();
+    
+            memepp::string dir_path;
+            memepp::string new_dir_path;
+    
+            // Create sequence and set up
+            auto seq = std::make_shared<mmbkpp::strg::sqlite3_sequence>();
+            dir_path = seq->dir_path();
+    
+            seq->set_open_after_create_table_cb(
+                [&](const mmbkpp::strg::sqlite3_hdl_sptr& _hdl, 
+                    const memepp::string& _table_name,
+                    mmbkpp::strg::sqlite3_sequence::index_id_t,
+                    mmbkpp::strg::sqlite3_sequence::node_id_t)
+                {
+                    auto cmd = fmt::format("CREATE TABLE IF NOT EXISTS {} ("
+                        "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                        "name TEXT NOT NULL)", _table_name);
+                    auto e = _hdl->do_write(cmd.data());
+                    REQUIRE(e.code() == 0);
+                });
+    
+            SECTION("wait_for_move: rename file after seq destruction")
+                        {
+                            // Create a new directory for move target
+                            new_dir_path = mmupp::fs::relative_with_program_path("test_db_p1_6_move_target");
+                            ghc::filesystem::create_directories(mm_to<memepp::native_string>(new_dir_path));
+        
+                            // Get handle and keep it externally
+                                                        auto hdl_ret = seq->get_rw_hdl(0, 0);
+                                                        REQUIRE(hdl_ret.has_value());
+                                                        auto external_hdl = hdl_ret.value();
+                                                        hdl_ret = outcome::failure(mgpp::err{});  // Release the outcome's internal shared_ptr copy
+        
+                            // Write some data
+                            external_hdl->do_write("INSERT INTO data (name) VALUES ('test');");
+        
+                            // Get original file path BEFORE move
+                                                        auto original_filepath = seq->filepath(0, 0);
+                                                        auto original_native_path = mm_to<memepp::native_string>(original_filepath);
+                                                        REQUIRE(ghc::filesystem::is_regular_file(original_native_path));
+        
+                                                        // Move directory while external handle is held
+                                                        seq->set_dir_path_and_move(new_dir_path);
+                
+                                                        // Expected target path after move
+                                                        auto target_filepath = fmt::format("{}/{:0>16}/{}.{:0>16}.{}",
+                                                            new_dir_path, 0, seq->file_prefix(), 0, seq->file_suffix());
+                
+                                                        // Destroy seq (this triggers old_nodes_ destruction)
+                                                        seq.reset();
+        
+                                                        // Now external_hdl is still alive, but seq_ is expired
+                                                                                    // Check file state BEFORE reset
+                                                                                    bool source_exists_before = ghc::filesystem::exists(original_native_path);
+                                                                                    bool target_exists_before = ghc::filesystem::is_regular_file(target_filepath);
+        
+                                                                                    // Debug: check if external_hdl is the last reference
+                                                                                    // external_hdl.reset() should trigger sqlite3_hdl destruction
+        
+                                                                                    // Release external handle - this triggers on_close_hdl
+                                                                                    external_hdl.reset();
+        
+                                                                                    // Check file state IMMEDIATELY after reset (before sleep)
+                                                                                    bool source_exists_immediate = ghc::filesystem::exists(original_native_path);
+                                                                                    bool target_exists_immediate = ghc::filesystem::is_regular_file(target_filepath);
+        
+                                                                                    // Give file system time to complete the rename operation
+                                                                                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        
+                                                                                    // Check file state AFTER reset
+                                                                                    bool source_exists_after = ghc::filesystem::exists(original_native_path);
+                                                                                    bool target_exists_after = ghc::filesystem::is_regular_file(target_filepath);
+        
+                                                                                    // If rename didn't happen at all, report detailed state
+                                                                                    if (!target_exists_after && source_exists_after) {
+                                                                                        FAIL_CHECK(fmt::format(
+                                                                                            "P1-6 rename not executed: before(source={},target={}), immediate(source={},target={}), after(source={},target={})",
+                                                                                            source_exists_before, target_exists_before,
+                                                                                            source_exists_immediate, target_exists_immediate,
+                                                                                            source_exists_after, target_exists_after));
+                                                                                    }
+        
+                            // Cleanup
+                            ghc::filesystem::remove_all(mm_to<memepp::native_string>(new_dir_path));
+                        }
+    
+            SECTION("Multiple handles: ensure correct file operation with persistent data")
+            {
+                new_dir_path = mmupp::fs::relative_with_program_path("test_db_p1_6_multi");
+                ghc::filesystem::create_directories(mm_to<memepp::native_string>(new_dir_path));
+        
+                // Get multiple handles for the same node
+                auto rw_hdl = seq->get_rw_hdl(0, 2).value();
+                auto ro_hdl = seq->get_ro_hdl(0, 2).value();
+        
+                rw_hdl->do_write("INSERT INTO data (name) VALUES ('multi_test');");
+        
+                auto original_filepath = seq->filepath(0, 2);
+                auto original_native_path = mm_to<memepp::native_string>(original_filepath);
+                REQUIRE(ghc::filesystem::is_regular_file(original_native_path));
+        
+                // Move directory
+                seq->set_dir_path_and_move(new_dir_path);
+        
+                auto target_filepath = fmt::format("{}/{:0>16}/{}.{:0>16}.{}",
+                    new_dir_path, 0, seq->file_prefix(), 2, seq->file_suffix());
+                //auto target_native_path = mm_to<memepp::native_string>(target_filepath);
+        
+                // Destroy seq
+                seq.reset();
+        
+                // Release handles in any order
+                ro_hdl.reset();
+                rw_hdl.reset();
+        
+                // Verify: file should still be renamed correctly
+                REQUIRE(ghc::filesystem::is_regular_file(target_filepath));
+                REQUIRE(ghc::filesystem::exists(original_native_path) == false);
+        
+                // Cleanup
+                ghc::filesystem::remove_all(mm_to<memepp::native_string>(new_dir_path));
+            }
+    
+            // Clean up test directory if not already cleaned
+            if (seq) {
+                seq.reset();
+            }
+            if (ghc::filesystem::exists(mm_to<memepp::native_string>(dir_path))) {
+                ghc::filesystem::remove_all(mm_to<memepp::native_string>(dir_path));
+            }
+        }
