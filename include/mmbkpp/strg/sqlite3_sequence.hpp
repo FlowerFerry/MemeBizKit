@@ -5,6 +5,7 @@
 #include <mego/util/std/time.h>
 #include <mego/util/get_temp_path.h>
 #include <mego/fs/dir.h>
+#include <mego/hardware/disk/disk.h>
 
 #include "sqlite3_hdl.hpp"
 
@@ -359,14 +360,13 @@ inline mgpp::err sqlite3_sequence::__node_info::try_remove()
 
 inline mgpp::err sqlite3_sequence::__node_info::try_move_to(const memepp::string& _filepath)
 {
-    if (has_hdl_ref__st())
-        return mgpp::err{ MGEC__BUSY };
-
     memepp::string src_path;
     do {
         sqlite3_hdl_sptr ro_hdl;
         sqlite3_hdl_sptr rw_hdl;
         std::unique_lock<std::mutex> locker(mtx_);
+        if (has_hdl_ref__st())
+            return mgpp::err{ MGEC__BUSY };
         ro_hdl.swap(s_ro_hdl_);
         rw_hdl.swap(s_rw_hdl_);
         src_path = filepath__st();
@@ -384,14 +384,13 @@ inline mgpp::err sqlite3_sequence::__node_info::try_move_to(const memepp::string
 
 inline mgpp::err sqlite3_sequence::__node_info::try_copy_to(const memepp::string& _filepath)
 {
-    if (has_hdl_ref__st())
-        return mgpp::err{ MGEC__BUSY };
-
     memepp::string src_path;
     do {
         sqlite3_hdl_sptr ro_hdl;
         sqlite3_hdl_sptr rw_hdl;
         std::lock_guard<std::mutex> locker(mtx_);
+        if (has_hdl_ref__st())
+            return mgpp::err{ MGEC__BUSY };
         ro_hdl.swap(s_ro_hdl_);
         rw_hdl.swap(s_rw_hdl_);
         src_path = filepath__st();
@@ -1230,6 +1229,19 @@ inline outcome::checked<sqlite3_hdl_sptr, mgpp::err>
     auto table_name = table_name_;
     locker.unlock();
 
+    auto cb_cleanup = mgpp::util::scope_cleanup__create([&]
+    {
+        node_locker.lock();
+        node_info->hdl_status_ = hdl_status_t::unavailabled;
+        bool has_ex_hdl = node_info->has_hdl_ref__st();
+        node_locker.unlock();
+
+        if (has_create_node && !has_ex_hdl) {
+            index_locker.lock();
+            index_info->nodes_.erase(_node);
+            index_locker.unlock();
+        }
+    });
     try {
         if (!_is_readonly && open_after_create_table_cb)
             (*open_after_create_table_cb)(hdl_ret.value(), table_name, _index, _node);
@@ -1240,6 +1252,7 @@ inline outcome::checked<sqlite3_hdl_sptr, mgpp::err>
     catch (...) {
         return outcome::failure(mgpp::err{ MGEC__ERR, "unknown exception" });
     }
+    cb_cleanup.cancel();
 
     auto data  = std::make_shared<__hdl_onclose_data>();
     data->seq_ = shared_from_this();
@@ -2081,13 +2094,13 @@ inline void sqlite3_sequence::on_close_hdl(const std::shared_ptr<void>& _userdat
 
     std::unique_lock<std::mutex> node_locker(node_info->mtx_);
     auto old_filepath = node_info->filepath__st();
+    bool has_hdl = node_info->has_hdl_ref__st();
     if (data->is_readonly_) {
         node_info->s_ro_hdl_.reset();
     }
     else {
         node_info->s_rw_hdl_.reset();
     }
-    bool has_hdl = (node_info->has_hdl_ref__st() && node_info->has_internal_hdl__st());
     bool db_remove = (node_info->db_file_status__st() == dbfile_status_t::wait_for_remove);
     auto copy_to_list = node_info->copy_to_list_;
     node_locker.unlock();
@@ -2150,24 +2163,88 @@ inline void sqlite3_sequence::on_preclose_hdl(sqlite3_hdl* _hdl, const std::shar
 inline void sqlite3_sequence::copy_sqlite_file(
     const ghc::filesystem::path& _from, const ghc::filesystem::path& _to, std::error_code& _ec)
 {
+    auto wal_from = _from;
+    auto wal_to   = _to;
+    auto shm_from = _from;
+    auto shm_to   = _to;
+    wal_from += MMN_TEXT("-wal");
+    wal_to   += MMN_TEXT("-wal");
+    shm_from += MMN_TEXT("-shm");
+    shm_to   += MMN_TEXT("-shm");
+
+    std::error_code ign;
+    mghw_harddisk_freespace_t free_space = { sizeof(mghw_harddisk_freespace_t) };
+    do {
+        if (mghw_get_harddisk_freespace_by_path(_to.string().c_str(), &free_space))
+            break;
+        size_t total_size = 0;
+        size_t file_size = 0;
+        total_size += ghc::filesystem::file_size(_from, _ec);
+        if (_ec)
+            return;
+        file_size = ghc::filesystem::file_size(wal_from, ign);
+        if (!ign)
+            total_size += file_size;
+        file_size = ghc::filesystem::file_size(shm_from, ign);
+        if (!ign)
+            total_size += file_size;
+
+        if (total_size > free_space.avail)
+        {
+            _ec = std::make_error_code(std::errc::no_space_on_device);
+            return;
+        }
+    } while(0);
+
     ghc::filesystem::copy(_from, _to, _ec);
     if (_ec)
         return;
-    std::error_code ign;
-    ghc::filesystem::copy(_from.native() + MMN_TEXT("-wal"), _to.native() + MMN_TEXT("-wal"), ign);
-    ghc::filesystem::copy(_from.native() + MMN_TEXT("-shm"), _to.native() + MMN_TEXT("-shm"), ign);
+    ghc::filesystem::copy(wal_from, wal_to, ign);
+    ghc::filesystem::copy(shm_from, shm_to, ign);
     // TO_DO: fsync dir if needed
 }
 
 inline void sqlite3_sequence::rename_sqlite_file(
     const ghc::filesystem::path& _from, const ghc::filesystem::path& _to, std::error_code& _ec)
 {
+    auto wal_from = _from;
+    auto wal_to   = _to;
+    auto shm_from = _from;
+    auto shm_to   = _to;
+    wal_from += MMN_TEXT("-wal");
+    wal_to   += MMN_TEXT("-wal");
+    shm_from += MMN_TEXT("-shm");
+    shm_to   += MMN_TEXT("-shm");
+
+    std::error_code ign;
+    mghw_harddisk_freespace_t free_space = { sizeof(mghw_harddisk_freespace_t) };
+    do {
+        if (mghw_get_harddisk_freespace_by_path(_to.string().c_str(), &free_space))
+            break;
+        size_t total_size = 0;
+        size_t file_size = 0;
+        total_size += ghc::filesystem::file_size(_from, _ec);
+        if (_ec)
+            return;
+        file_size = ghc::filesystem::file_size(wal_from, ign);
+        if (!ign)
+            total_size += file_size;
+        file_size = ghc::filesystem::file_size(shm_from, ign);
+        if (!ign)
+            total_size += file_size;
+
+        if (total_size > free_space.avail)
+        {
+            _ec = std::make_error_code(std::errc::no_space_on_device);
+            return;
+        }
+    } while(0);
+
     ghc::filesystem::rename(_from, _to, _ec);
     if (_ec)
         return;
-    std::error_code ign;
-    ghc::filesystem::rename(_from.native() + MMN_TEXT("-wal"), _to.native() + MMN_TEXT("-wal"), ign);
-    ghc::filesystem::rename(_from.native() + MMN_TEXT("-shm"), _to.native() + MMN_TEXT("-shm"), ign);
+    ghc::filesystem::rename(wal_from, wal_to, ign);
+    ghc::filesystem::rename(shm_from, shm_to, ign);
     auto from_dir = ghc::filesystem::absolute(_from).lexically_normal().parent_path();
     auto to_dir   = ghc::filesystem::absolute(_to  ).lexically_normal().parent_path();
     if (from_dir != to_dir) {
