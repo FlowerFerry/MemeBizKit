@@ -354,7 +354,8 @@ namespace container {
             if (it == std::get<_Index>(maps_).end())
                 return 0;
             erase_impl<_Index, sizeof...(_TLayers)>(it->first.tuple());
-            return std::get<_Index>(maps_).erase(_key);
+            std::get<_Index>(maps_).erase(it);
+            return 1;
         }
         
         inline size_t erase(const typename mk_nth_helper<0, _TLayer, _TLayers...>::type::key_type& _key)
@@ -363,7 +364,8 @@ namespace container {
             if (it == std::get<0>(maps_).end())
                 return 0;
             erase_impl<0, sizeof...(_TLayers)>(it->first.tuple());
-            return std::get<0>(maps_).erase(_key);
+            std::get<0>(maps_).erase(it);
+            return 1;
         }
 
         inline void clear() noexcept

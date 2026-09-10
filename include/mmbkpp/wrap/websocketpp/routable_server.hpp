@@ -116,6 +116,9 @@ private:
     int port_ = -1;
     std::string host_;
 
+    // TODO: ws_handlers_ has no public registration API yet.
+    //       WebSocket routing is non-functional until a method like
+    //       ws_route(pattern, callbacks) is added.
     ws_handlers ws_handlers_;
     std::unordered_map<mgpp::mem::hashable_weak_ptr<void>, ws_cb_registry_ptr> ws_cb_registry_table_;
     std::unordered_map<mgpp::mem::hashable_weak_ptr<void>, ws_conn_param_ptr> ws_conns_;
@@ -382,6 +385,9 @@ inline void routable_server<Config>::__on_open(const websocketpp::connection_hdl
     auto conn = server_.get_con_from_hdl(_hdl);
     
     if (callbacks->open_handler) {
+        // TODO: ping_interval_ms_ is currently -1 (never set to a positive value).
+        //       set_timer expects seconds, not milliseconds - verify against vendored websocketpp.
+        //       Callback body is empty; ping keepalive is not implemented yet.
         auto ping_timer = conn->set_timer(ping_interval_ms_, [this, _hdl](auto const& _hdl) 
         {
             // TO_DO
@@ -485,10 +491,14 @@ inline void routable_server<Config>::__on_http(const websocketpp::connection_hdl
     auto const& method = conn->get_request().get_method();
 
     if (method == "POST") {
-        __dispatch_request(_hdl, http_post_handlers_);
+        if (__dispatch_request(_hdl, http_post_handlers_)) {
+            return ;
+        }
     }
     else if (method == "GET" || method == "HEAD") {
-        __dispatch_request(_hdl, http_get_handlers_);
+        if (__dispatch_request(_hdl, http_get_handlers_)) {
+            return ;
+        }
     }
     
     conn->set_status(websocketpp::http::status_code::not_found);
