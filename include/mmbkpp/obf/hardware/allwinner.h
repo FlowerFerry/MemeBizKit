@@ -27,20 +27,12 @@ namespace obf_hw {
         if (_len < 8 || _len > 32) {
             return false;
         }
-        for (size_t i = 0; i < _len; ++i) {
-            const char c = _s[i];
-            if (!(((c >= '0') && (c <= '9')) ||
-                  ((c >= 'a') && (c <= 'f')) ||
-                  ((c >= 'A') && (c <= 'F')))) {
-                return false;
-            }
+        if (std::strspn(_s, "0123456789abcdefABCDEF") != _len) {
+            return false;
         }
-        for (size_t i = 1; i < _len; ++i) {
-            if (_s[i] != _s[0]) {
-                return true;
-            }
-        }
-        return false;
+        // Reject un-programmed eFuse: all nibbles identical (e.g. "0000..." or "FFFF...")
+        const char same[2] = { _s[0], '\0' };
+        return std::strspn(_s, same) != _len;
     }
 
     inline bool allwinner__read_file(const char* _path, char* _buf, size_t _cap, size_t& _len)
@@ -100,22 +92,22 @@ namespace obf_hw {
 
         FILE* fp = mgu_fopen("/sys/class/sunxi_info/key_info", -1, "r+", -1);
         OBF_IF (fp == nullptr) {
-            OBF_RETURN(e);
+            OBF_RETURN(mgpp::err{ MGEC__NODATA });
         }
         OBF_ENDIF;
         MEGOPP_UTIL__ON_SCOPE_CLEANUP([&] { if (fp) fclose(fp); });
 
         OBF_IF (fwrite("chipid", 1, 6, fp) != 6) {
-            OBF_RETURN(e);
+            OBF_RETURN(mgpp::err{ MGEC__ERR });
         }
         OBF_ENDIF;
         OBF_IF (fseek(fp, 0, SEEK_SET) != 0) {
-            OBF_RETURN(e);
+            OBF_RETURN(mgpp::err{ MGEC__ERR });
         }
         OBF_ENDIF;
         len = fread(buf, 1, sizeof(buf) - 1, fp);
         OBF_IF (len == 0) {
-            OBF_RETURN(e);
+            OBF_RETURN(mgpp::err{ MGEC__NODATA });
         }
         OBF_ENDIF;
         buf[len] = '\0';
@@ -128,7 +120,7 @@ namespace obf_hw {
             ++end;
         }
         OBF_IF (is_valid_hwid_hex(p, static_cast<size_t>(end - p)) == false) {
-            OBF_RETURN(e);
+            OBF_RETURN(mgpp::err{ MGEC__INVAL });
         }
         OBF_ENDIF;
 

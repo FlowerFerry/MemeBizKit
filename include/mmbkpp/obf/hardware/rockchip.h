@@ -47,47 +47,41 @@ namespace obf_hw {
         constexpr size_t kSerialLen   = kCpuIdLen - kSerialSkip;  // 12
 
         char buf[64];
-        char out[kSerialLen * 2 + 1];  // 12-byte serial -> 24 hex chars + NUL
         size_t len = 0;
         OBF_IF (rockchip__read_file("/sys/bus/nvmem/devices/rockchip-otp0/nvmem", buf, sizeof(buf), len))
         {
-            OBF_IF (len >= kCpuIdOffset + kCpuIdLen)
+            OBF_IF (len < kCpuIdOffset + kCpuIdLen)
             {
-                const char* src = buf + kCpuIdOffset + kSerialSkip;   // the 12 unique bytes
-                bool all_zero = true;
-                size_t i = 0;
-                OBF_FOR (i = 0, i < kSerialLen, ++i)
-                {
-                    OBF_IF (static_cast<unsigned char>(src[i]) != 0)
-                    {
-                        all_zero = false;
-                        OBF_BREAK;
-                    }
-                    OBF_ENDIF;
-                }
-                OBF_ENDFOR;
+                OBF_RETURN(mgpp::err{ MGEC__NODATA });
+            }
+            OBF_ENDIF;
 
-                OBF_IF (all_zero == false)
+            const char* src = buf + kCpuIdOffset + kSerialSkip;   // the 12 unique bytes
+            bool all_zero = true;
+            size_t i = 0;
+            OBF_FOR (i = 0, i < kSerialLen, ++i)
+            {
+                OBF_IF (static_cast<unsigned char>(src[i]) != 0)
                 {
-                    static const char* const hexd = "0123456789abcdef";
-                    OBF_FOR (i = 0, i < kSerialLen, ++i)
-                    {
-                        const unsigned char b = static_cast<unsigned char>(src[i]);
-                        out[i * 2]     = hexd[b >> 4];
-                        out[i * 2 + 1] = hexd[b & 0x0f];
-                    }
-                    OBF_ENDFOR;
-                    out[kSerialLen * 2] = '\0';
-                    _serial = memepp::string{ out, static_cast<memepp::string::size_type>(kSerialLen * 2) };
-                    OBF_RETURN(e);
+                    all_zero = false;
+                    OBF_BREAK;
                 }
                 OBF_ENDIF;
             }
+            OBF_ENDFOR;
+
+            OBF_IF (all_zero)
+            {
+                OBF_RETURN(mgpp::err{ MGEC__INVAL });
+            }
             OBF_ENDIF;
+
+            _serial = memepp::from_hexadecimals(reinterpret_cast<const uint8_t*>(src), kSerialLen);
+            OBF_RETURN(e);
         }
         OBF_ENDIF;
 
-        OBF_RETURN(e);
+        OBF_RETURN(mgpp::err{ MGEC__NODATA });
 #else
         OBF_RETURN(mgpp::err{ MGEC__OPNOTSUPP });
 #endif
