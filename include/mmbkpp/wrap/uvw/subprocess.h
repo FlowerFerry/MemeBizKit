@@ -576,7 +576,8 @@ private:
         auto self_ptr = this->shared_from_this();
         self_reset();
         if (close_cb_) {
-            close_cb_(::uvw::close_event{}, *this);
+            ::uvw::close_event ce{};
+            close_cb_(ce, *this);
         }
     }
     
