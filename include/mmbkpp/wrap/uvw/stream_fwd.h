@@ -2,7 +2,7 @@
 #ifndef MMBKPP_WRAP_UVW_STREAM_FWD_H_INCLUDED
 #define MMBKPP_WRAP_UVW_STREAM_FWD_H_INCLUDED
 
-#ifndef MMBKPP_WRAP_UVW_3_0_DISABLED
+#ifdef MMBKPP_WRAP_UVW_3_0_DISABLED
 namespace uvw {
     
     struct ConnectEvent;

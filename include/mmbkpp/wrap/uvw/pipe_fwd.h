@@ -4,7 +4,7 @@
 
 #include <mmbkpp/wrap/uvw/stream_fwd.h>
 
-#ifndef MMBKPP_WRAP_UVW_3_0_DISABLED
+#ifdef MMBKPP_WRAP_UVW_3_0_DISABLED
 namespace uvw {
     
     class PipeHandle;
