@@ -24,6 +24,12 @@ set(MMBK_LIBUV_TAG     "v1.48.0"                   CACHE STRING "")
 set(MMBK_UVW_REPO      "skypjack/uvw"              CACHE STRING "")
 set(MMBK_UVW_TAG       "v3.4.0_libuv_v1.48"        CACHE STRING "")
 
+set(MMBK_MEMEUTILS_REPO  "FlowerFerry/MemeUtils"   CACHE STRING "")
+set(MMBK_MEMEUTILS_TAG   "develop"                 CACHE STRING "")
+
+set(MMBK_SQLITE3_URL     "https://www.sqlite.org/2024/sqlite-amalgamation-3460100.zip" CACHE STRING "")
+set(MMBK_SQLITE3_SHA256  "77823cb110929c2bcb0f5d48e4833b5c59a8a6e40cdea3936b99e199dbbe5784" CACHE STRING "")
+
 set(FETCHCONTENT_TIMEOUT 120)
 set(FETCHCONTENT_QUIET   FALSE)
 
@@ -151,6 +157,47 @@ if(MSVC)
 endif()
 
 # ---------------------------------------------------------------------------
+# MemeUtils (header-only part used: mmutilspp/locale/tag.h)
+# ---------------------------------------------------------------------------
+FetchContent_Declare(
+    MemeUtils
+    GIT_REPOSITORY https://${MMBK_GIT_HOST}/${MMBK_MEMEUTILS_REPO}
+    GIT_TAG        ${MMBK_MEMEUTILS_TAG}
+    SOURCE_DIR     ${CMAKE_SOURCE_DIR}/deps/MemeUtils
+    GIT_PROGRESS   TRUE
+)
+FetchContent_GetProperties(memeutils)
+if(NOT memeutils_POPULATED)
+    FetchContent_Populate(memeutils)
+endif()
+
+# ---------------------------------------------------------------------------
+# sqlite3 amalgamation (only for unit tests; catalog.h itself does not ship sqlite)
+# ---------------------------------------------------------------------------
+FetchContent_Declare(
+    sqlite3
+    URL        ${MMBK_SQLITE3_URL}
+    URL_HASH   SHA256=${MMBK_SQLITE3_SHA256}
+    SOURCE_DIR ${CMAKE_SOURCE_DIR}/deps/sqlite3
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+)
+FetchContent_GetProperties(sqlite3)
+if(NOT sqlite3_POPULATED)
+    FetchContent_Populate(sqlite3)
+endif()
+
+add_library(sqlite3_amalg STATIC ${CMAKE_SOURCE_DIR}/deps/sqlite3/sqlite3.c)
+target_include_directories(sqlite3_amalg PUBLIC ${CMAKE_SOURCE_DIR}/deps/sqlite3)
+target_compile_definitions(sqlite3_amalg PRIVATE
+    SQLITE_THREADSAFE=1
+    SQLITE_OMIT_LOAD_EXTENSION
+    SQLITE_DEFAULT_MEMSTATUS=0
+)
+if(MSVC)
+    target_compile_options(sqlite3_amalg PRIVATE /W0)
+endif()
+
+# ---------------------------------------------------------------------------
 # Main test executable
 # ---------------------------------------------------------------------------
 set(SRC_FILES
@@ -161,6 +208,7 @@ set(SRC_FILES
     test_text_file.cpp
     test_text_file_monitor.cpp
     test_stream_package_preproc.cpp
+    test_i18n_catalog.cpp
 )
 
 add_executable(${PROJECT_NAME} ${SRC_FILES})
@@ -178,6 +226,7 @@ endif()
 target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/deps/Catch2/single_include
     ${CMAKE_SOURCE_DIR}/deps/MemeString/include
+    ${CMAKE_SOURCE_DIR}/deps/MemeUtils/include
     ${CMAKE_SOURCE_DIR}/deps/quickcpplib/include
     ${CMAKE_SOURCE_DIR}/deps/outcome/include
     ${CMAKE_SOURCE_DIR}/deps/filesystem/include
@@ -189,6 +238,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 target_link_libraries(${PROJECT_NAME} PRIVATE
     ${MEMESTRING_PROJECT_NAME}
     uvw_impl
+    sqlite3_amalg
 )
 
 set_target_properties(${PROJECT_NAME} PROPERTIES
