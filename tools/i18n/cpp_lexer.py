@@ -209,13 +209,14 @@ def tokenize(buf):
         # ---- raw string R"delim(...)delim" ----
         if c in b"uULR" or c == b"R":
             # Handles u8R"..." / uR"..." / UR"..." / LR"..." / R"..."
+            # prefix_len is the distance from i to the opening quote.
             prefix_len = 0
             if buf[i:i + 3] == b"u8R":
-                prefix_len = 2
+                prefix_len = 3
             elif buf[i:i + 2] in (b"uR", b"UR", b"LR"):
-                prefix_len = 1
+                prefix_len = 2
             elif c == b"R" and buf[i + 1:i + 2] == b'"':
-                prefix_len = 0
+                prefix_len = 1
             else:
                 prefix_len = -1
             if prefix_len >= 0:
