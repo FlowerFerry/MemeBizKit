@@ -78,6 +78,15 @@
 //       PRIMARY KEY (lang, ctx, msgid, form)
 //   ) WITHOUT ROWID;
 //   i18n_message.lang must be byte-identical to i18n_language.lang.
+//
+// [Known limits]
+//   - fast_catalog: a single language's string pool is capped at 4 GiB (offsets
+//     are uint32_t). build() throws std::length_error if that limit is exceeded.
+//   - lite_catalog: destruction must not run concurrently with queries; use
+//     catalog_registry::remove() + release_token::wait_released() to sequence it.
+//   - global() returns a shared_ptr, so a concurrent set_global() cannot destroy
+//     the registry while a query is in flight; the caller holds a strong
+//     reference for the duration of the call.
 // =============================================================================
 
 #ifndef MMBKPP_I18N_ENABLE_SQLITE
@@ -94,6 +103,7 @@
 #include <list>
 #include <memory>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -104,6 +114,7 @@
 #include <memepp/string_view.hpp>
 #include <memepp/convert/std/c_str.hpp>
 #include <megopp/memory/atomic_shared_ptr.h>
+#include <megopp/thrd/seqlock.h>
 #include <megopp/err/err.hpp>
 #include <mego/err/ec.h>
 #include <mmutilspp/locale/tag.h>
@@ -914,24 +925,22 @@ public:
     // ---- language settings (thread safe) ----
     void set_default_language(const tag_t& _tag)
     {
-        default_.store(std::make_shared<tag_t>(_tag));
+        default_.store(_tag);
     }
 
     tag_t default_language() const
     {
-        std::shared_ptr<const tag_t> p = default_.load();
-        return p ? *p : make_tag("en");
+        return default_.load();
     }
 
     void set_source_language(const tag_t& _tag)
     {
-        source_.store(std::make_shared<tag_t>(_tag));
+        source_.store(_tag);
     }
 
     tag_t source_language() const
     {
-        std::shared_ptr<const tag_t> p = source_.load();
-        return p ? *p : make_tag("en");
+        return source_.load();
     }
 
     // ---- plain text ----
@@ -1013,9 +1022,9 @@ public:
     {
         try {
             const details::tag_chain chain = details::make_chain(_tag);
-            std::shared_ptr<const tag_t> src = source_.load();
+            const tag_t src = source_.load();
             for (int i = 0; i < chain.n; ++i) {
-                if (src && chain.v[i] == *src)
+                if (chain.v[i] == src)
                     return false;   // the source language has no translation of its own
                 if (lookup_one(chain.v[i], _ctx, _msgid, _plural, _n, _out))
                     return true;
@@ -1027,14 +1036,13 @@ public:
 
 protected:
     catalog()
-    {
-        source_.store(std::make_shared<tag_t>(make_tag("en")));
-        default_.store(std::make_shared<tag_t>(make_tag("en")));
-    }
+        : source_(make_tag("en"))
+        , default_(make_tag("en"))
+    {}
 
     //! @brief Snapshot of the source language; derived classes need it for their
-    //!        own fallback-chain walks.
-    std::shared_ptr<const tag_t> source_language_ptr() const
+    //!        own fallback-chain walks. A value copy (32 bytes), no heap traffic.
+    tag_t source_language_value() const
     {
         return source_.load();
     }
@@ -1046,8 +1054,11 @@ protected:
                             memepp::string& _out) const = 0;
 
 private:
-    mgpp::mem::atomic_shared_ptr<const tag_t> source_;
-    mgpp::mem::atomic_shared_ptr<const tag_t> default_;
+    // A locale tag is trivially copyable and only 32 bytes, so a seqlock is a
+    // far cheaper way to publish it than a reference-counted shared_ptr: readers
+    // take no lock and allocate nothing.
+    mgpp::thrd::seqlock<tag_t> source_;
+    mgpp::thrd::seqlock<tag_t> default_;
 };
 
 // ---------------------------------------------------------------------------
@@ -1220,27 +1231,16 @@ public:
     {
         try {
             const details::tag_chain chain = details::make_chain(_tag);
-            std::shared_ptr<const tag_t> src = source_language_ptr();
+            const tag_t src = source_language_value();
             for (int i = 0; i < chain.n; ++i) {
-                if (src && chain.v[i] == *src)
+                if (chain.v[i] == src)
                     return false;
-                const details::lang_table* t = find_table(chain.v[i]);
-                if (!t)
-                    continue;
-                const details::entry_rec* e = t->find(_ctx, _msgid);
-                if (!e)
-                    continue;
-                uint32_t idx = 0;
-                if (_plural) {
-                    idx = t->rule.index(_n);
-                    if (idx >= e->form_count)
-                        idx = e->form_count - 1;
-                }
-                const details::form_rec& f = t->forms[e->form_begin + idx];
-                if (f.len == details::lang_table::k_absent)
+                std::shared_ptr<details::pool_block> blk;
+                details::form_rec f{ 0, 0 };
+                if (!find_form(chain.v[i], _ctx, _msgid, _plural, _n, blk, f))
                     continue;
                 _out = memepp::string_view{
-                    t->blk->data() + f.off,
+                    blk->data() + f.off,
                     static_cast<memepp::string_view::size_type>(f.len) };
                 return true;
             }
@@ -1485,11 +1485,13 @@ public:
             t.forms.reserve(pl.entries.size() * 2);
 
             auto append_seg = [&bytes](const memepp::string& _s, uint32_t& _len) -> uint32_t {
-                const uint32_t off = static_cast<uint32_t>(bytes.size());
                 const size_t n = static_cast<size_t>(_s.size());
+                // Check 4GiB limit before appending
+                if (bytes.size() + n + 1 > 0xFFFFFFFFull)
+                    throw std::length_error("i18n: language string pool exceeds 4GiB");
+                const uint32_t off = static_cast<uint32_t>(bytes.size());
                 const char* p = _s.data();
-                for (size_t i = 0; i < n; ++i)
-                    bytes.push_back(p[i]);
+                bytes.insert(bytes.end(), p, p + n);
                 bytes.push_back('\0');
                 _len = static_cast<uint32_t>(n);
                 return off;
@@ -1733,7 +1735,7 @@ struct conn_pool
 
     std::string                         path;   //!< UTF-8
     lite_options                        opts;
-    std::mutex                          mtx;
+    mutable std::mutex                  mtx;
     std::vector<std::unique_ptr<conn>>  conns;
 
     conn_pool(std::string _path, const lite_options& _opts)
@@ -1796,7 +1798,7 @@ struct conn_pool
 
     size_t count() const
     {
-        std::lock_guard<std::mutex> lk(const_cast<std::mutex&>(mtx));
+        std::lock_guard<std::mutex> lk(mtx);
         return conns.size();
     }
 };
@@ -1995,6 +1997,24 @@ public:
             if (!tag.valid())
                 continue;
 
+            // Check for duplicate language tags
+            for (const auto& existing : langs) {
+                if (existing.tag == tag) {
+                    sqlite3_finalize(stmt);
+                    if (_err) {
+                        std::string msg = "duplicate language tag: '";
+                        msg.append(lcp, static_cast<size_t>(ln));
+                        msg.append("' (same as '");
+                        msg.append(existing.lang_text.data(), static_cast<size_t>(existing.lang_text.size()));
+                        msg.append("')");
+                        const memepp::string err_msg{ msg.c_str(),
+                            static_cast<memepp::string::size_type>(msg.size()) };
+                        *_err = mgpp::err{ MGEC__INVAL, err_msg };
+                    }
+                    return nullptr;
+                }
+            }
+
             lang_info li;
             li.tag = tag;
             li.lang_text = memepp::string{ lcp, static_cast<memepp::string::size_type>(ln) };
@@ -2004,6 +2024,22 @@ public:
             langs.push_back(std::move(li));
         }
         sqlite3_finalize(stmt);
+
+        // Verify i18n_message table exists by preparing the actual query.
+        // If this fails, every thread would fail on first prepare and keep
+        // re-opening the file; catch it here instead.
+        sqlite3_stmt* msg_stmt = nullptr;
+        rc = sqlite3_prepare_v2(db.get(), details::conn_pool::select_sql(), -1, &msg_stmt, nullptr);
+        if (rc != SQLITE_OK) {
+            const int32_t code = mgec__from_sqlite3_err(rc);
+            const memepp::string msg{ sqlite3_errmsg(db.get()) };
+            if (msg_stmt)
+                sqlite3_finalize(msg_stmt);
+            if (_err)
+                *_err = mgpp::err{ code, msg };
+            return nullptr;
+        }
+        sqlite3_finalize(msg_stmt);
 
         auto cat = std::make_shared<lite_catalog>(lite_catalog::ctor_key{});
         cat->langs_ = std::move(langs);
@@ -2104,7 +2140,10 @@ protected:
         sqlite3_reset(c->stmt);
         sqlite3_clear_bindings(c->stmt);
 
-        if (use_cache)
+        // Only cache a legitimate miss (SQLITE_DONE). A transient error such as
+        // SQLITE_BUSY or SQLITE_IOERR must not be cached, otherwise one lock
+        // conflict would pin the source text until the entry is evicted.
+        if (use_cache && (rc == SQLITE_ROW || rc == SQLITE_DONE))
             c->cache.put(std::move(key), found, text);
         if (found)
             _out = std::move(text);
@@ -2178,6 +2217,10 @@ inline mgpp::err fast_catalog_builder::load_from_sqlite(const char* _path_utf8)
             return mgpp::err{ code, msg };
         }
 
+        // Map from tag to the first raw string that produced it, used to detect
+        // duplicates (e.g. "zh-CN" and "zh_CN" both parse to the same tag).
+        std::unordered_map<tag_t, std::string> tag_to_raw;
+
         for (;;) {
             rc = sqlite3_step(stmt);
             if (rc == SQLITE_DONE)
@@ -2201,6 +2244,21 @@ inline mgpp::err fast_catalog_builder::load_from_sqlite(const char* _path_utf8)
                 memepp::string_view{ lcp, static_cast<memepp::string_view::size_type>(ln) });
             if (!tag.valid())
                 continue;
+
+            // Check for duplicate language tags
+            auto it = tag_to_raw.find(tag);
+            if (it != tag_to_raw.end()) {
+                sqlite3_finalize(stmt);
+                std::string msg = "duplicate language tag: '";
+                msg.append(lcp, static_cast<size_t>(ln));
+                msg.append("' (same as '");
+                msg.append(it->second);
+                msg.append("')");
+                const memepp::string err_msg{ msg.c_str(),
+                    static_cast<memepp::string::size_type>(msg.size()) };
+                return mgpp::err{ MGEC__INVAL, err_msg };
+            }
+            tag_to_raw.emplace(tag, std::string{ lcp, static_cast<size_t>(ln) });
 
             known[std::string{ lcp, static_cast<size_t>(ln) }] = tag;
             set_plural_rule(tag, memepp::string_view{
@@ -2409,9 +2467,9 @@ class catalog_registry
 {
 public:
     catalog_registry()
+        : default_(make_tag("en"))
     {
         snap_.store(std::make_shared<const snapshot_t>());
-        default_.store(std::make_shared<tag_t>(make_tag("en")));
     }
 
     catalog_registry(const catalog_registry&) = delete;
@@ -2499,13 +2557,12 @@ public:
 
     void set_default_language(const tag_t& _tag)
     {
-        default_.store(std::make_shared<tag_t>(_tag));
+        default_.store(_tag);
     }
 
     tag_t default_language() const
     {
-        std::shared_ptr<const tag_t> p = default_.load();
-        return p ? *p : make_tag("en");
+        return default_.load();
     }
 
     // ---- queries: same names and signatures as catalog ----
@@ -2596,7 +2653,7 @@ private:
 
     mutable std::mutex                             wmtx_;
     mgpp::mem::atomic_shared_ptr<const snapshot_t> snap_;
-    mgpp::mem::atomic_shared_ptr<const tag_t>      default_;
+    mgpp::thrd::seqlock<tag_t>                     default_;
 };
 
 // ---------------------------------------------------------------------------

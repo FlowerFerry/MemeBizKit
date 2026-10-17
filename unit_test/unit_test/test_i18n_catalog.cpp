@@ -434,6 +434,22 @@ TEST_CASE("fast catalog", "[i18n][fast]")
         REQUIRE(!e.ok());
         fs::remove(empty_db);
     }
+    {
+        // Duplicate language tags: "zh-CN" and "zh_CN" parse to the same tag.
+        const char* dup_sql = R"(
+CREATE TABLE i18n_language (lang TEXT PRIMARY KEY, plural_rule TEXT NOT NULL DEFAULT '') WITHOUT ROWID;
+CREATE TABLE i18n_message (lang TEXT NOT NULL, ctx TEXT NOT NULL DEFAULT '', msgid TEXT NOT NULL,
+  form INTEGER NOT NULL DEFAULT 0, msgstr TEXT NOT NULL, PRIMARY KEY (lang, ctx, msgid, form)) WITHOUT ROWID;
+INSERT INTO i18n_language VALUES ('zh-CN',''),('zh_CN','');
+INSERT INTO i18n_message VALUES ('zh-CN','','Open',0,'x');
+)";
+        const std::string dup_db = make_db("dup_fast", dup_sql);
+        fast_catalog_builder b;
+        mgpp::err e = b.load_from_sqlite(dup_db.c_str());
+        REQUIRE(!e.ok());
+        REQUIRE(S(e.message()).find("duplicate language tag") != std::string::npos);
+        fs::remove(dup_db);
+    }
 
     {
         fast_catalog_builder b;
@@ -650,6 +666,23 @@ TEST_CASE("lite catalog", "[i18n][lite]")
 
         lite.reset();
         fs::remove(main_db);
+    }
+
+    // 8. duplicate tag detection (e.g. "zh-CN" and "zh_CN" parse to the same tag)
+    {
+        const char* dup_sql = R"(
+CREATE TABLE i18n_language (lang TEXT PRIMARY KEY, plural_rule TEXT NOT NULL DEFAULT '') WITHOUT ROWID;
+CREATE TABLE i18n_message (lang TEXT NOT NULL, ctx TEXT NOT NULL DEFAULT '', msgid TEXT NOT NULL,
+  form INTEGER NOT NULL DEFAULT 0, msgstr TEXT NOT NULL, PRIMARY KEY (lang, ctx, msgid, form)) WITHOUT ROWID;
+INSERT INTO i18n_language VALUES ('zh-CN',''),('zh_CN','');
+)";
+        const std::string dup_db = make_db("dup_lite", dup_sql);
+        mgpp::err e;
+        auto lite = lite_catalog::open(dup_db.c_str(), {}, &e);
+        REQUIRE(!lite);
+        REQUIRE(!e.ok());
+        REQUIRE(S(e.message()).find("duplicate language tag") != std::string::npos);
+        fs::remove(dup_db);
     }
 }
 
