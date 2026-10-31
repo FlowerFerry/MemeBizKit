@@ -10,7 +10,7 @@ option(BUILD_TEST_NESTED_HMAP "Build test_nested_hmap" ON)
 option(BUILD_TEST_PASSIVE_TIMER "Build test_passive_timer" ON)
 option(BUILD_TEST_UNIT_TEST "Build unit_test" ON)
 option(BUILD_TEST_OBF_READDIR "Build obf_readdir" ON)
-option(BUILD_TEST_SQLITE3_SEQUENCE "Build sqlite3_sequence" ON)
+option(BUILD_TEST_SQLITE3_SEQUENCE "Build sqlite3_sequence" OFF)
 
 if(BUILD_TEST_MKHMAP)
     add_subdirectory(test_mkhmap)

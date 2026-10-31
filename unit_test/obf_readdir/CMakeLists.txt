@@ -11,19 +11,13 @@ FetchContent_Declare(
 	fmt
 	GIT_REPOSITORY https://github.com/fmtlib/fmt.git
 	GIT_TAG 10.2.1
-	SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/deps/fmt-10.2.1
 )
-FetchContent_Populate(fmt)
-	
-FetchContent_Declare(
-	obf_memestring
-	GIT_REPOSITORY https://github.com/FlowerFerry/MemeString.git
-	GIT_TAG develop
-	SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/deps/MemeString
-)
-FetchContent_Populate(obf_memestring)
+FetchContent_MakeAvailable(fmt)
 
-add_subdirectory(deps/MemeString)
+# Use MemeString from parent build (already fetched by unit_test root)
+if(NOT TARGET meme_string AND NOT TARGET libmeme_string)
+    message(FATAL_ERROR "MemeString target not available. Build as part of unit_test root.")
+endif()
 
 add_executable(${PROJECT_NAME} main.cpp)
 
@@ -32,23 +26,21 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE FMT_HEADER_ONLY)
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_17)
 
 target_include_directories(${PROJECT_NAME} PRIVATE 
-	${CMAKE_CURRENT_SOURCE_DIR}/
-	${CMAKE_CURRENT_SOURCE_DIR}/deps/fmt-10.2.1/include
-	${CMAKE_CURRENT_SOURCE_DIR}/deps/MemeString/include
+	${CMAKE_CURRENT_SOURCE_DIR}
+	${CMAKE_SOURCE_DIR}/deps/MemeString/include
 	${CMAKE_CURRENT_SOURCE_DIR}/../../include
 )
 
-target_link_libraries(${PROJECT_NAME} PRIVATE 
-	${MEMESTRING_PROJECT_NAME}
-)
+target_link_libraries(${PROJECT_NAME} PRIVATE fmt::fmt)
+
+# Link against the MemeString library
+if(TARGET libmeme_string)
+    target_link_libraries(${PROJECT_NAME} PRIVATE libmeme_string)
+elseif(TARGET meme_string)
+    target_link_libraries(${PROJECT_NAME} PRIVATE meme_string)
+endif()
 
 set_target_properties(${PROJECT_NAME} PROPERTIES
     BUILD_WITH_INSTALL_RPATH TRUE
     INSTALL_RPATH "$ORIGIN")
-
-add_custom_command(
-	TARGET ${PROJECT_NAME} POST_BUILD
-	COMMAND ${CMAKE_COMMAND} -E copy_if_different
-    $<TARGET_FILE:${MEMESTRING_PROJECT_NAME}>
-	$<TARGET_FILE_DIR:${PROJECT_NAME}>
 )
