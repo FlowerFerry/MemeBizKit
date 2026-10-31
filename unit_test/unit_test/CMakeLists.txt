@@ -46,67 +46,87 @@ FetchContent_Declare(
 )
 FetchContent_GetProperties(catch2)
 if(NOT catch2_POPULATED)
-    FetchContent_Populate(catch2)
+    if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/deps/Catch2)
+        set(catch2_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/deps/Catch2)
+        set(catch2_POPULATED TRUE)
+    else()
+        FetchContent_Populate(catch2)
+    endif()
 endif()
 
 # ---------------------------------------------------------------------------
 # MemeString (compiled library: provides mego/, megopp/, memepp/ headers)
 # ---------------------------------------------------------------------------
 set(MEMESTRING_SONAME_SUFFIX_ENABLE OFF CACHE BOOL "" FORCE)
-FetchContent_Declare(
-    MemeString
-    GIT_REPOSITORY https://${MMBK_GIT_HOST}/${MMBK_MEMESTRING_REPO}
-    GIT_TAG        ${MMBK_MEMESTRING_TAG}
-    GIT_PROGRESS   TRUE
-)
-FetchContent_GetProperties(memestring)
-if(NOT memestring_POPULATED)
-    FetchContent_MakeAvailable(MemeString)
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/deps/MemeString)
+    set(memestring_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/deps/MemeString)
+    add_subdirectory(${memestring_SOURCE_DIR})
+    set(memestring_POPULATED TRUE)
+else()
+    FetchContent_Declare(
+        MemeString
+        GIT_REPOSITORY https://${MMBK_GIT_HOST}/${MMBK_MEMESTRING_REPO}
+        GIT_TAG        ${MMBK_MEMESTRING_TAG}
+        GIT_PROGRESS   TRUE
+    )
+    FetchContent_GetProperties(memestring)
+    if(NOT memestring_POPULATED)
+        FetchContent_MakeAvailable(MemeString)
+    endif()
 endif()
 
 # ---------------------------------------------------------------------------
 # quickcpplib (header-only, required by outcome)
 # ---------------------------------------------------------------------------
-FetchContent_Declare(
-    quickcpplib
-    GIT_REPOSITORY https://${MMBK_GIT_HOST}/${MMBK_QUICKCPPLIB_REPO}
-    GIT_TAG        ${MMBK_QUICKCPPLIB_TAG}
-    SOURCE_DIR     ${CMAKE_SOURCE_DIR}/deps/quickcpplib
-    GIT_PROGRESS   TRUE
-)
-FetchContent_GetProperties(quickcpplib)
-if(NOT quickcpplib_POPULATED)
-    FetchContent_Populate(quickcpplib)
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/deps/quickcpplib)
+    set(quickcpplib_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/deps/quickcpplib)
+else()
+    FetchContent_Declare(
+        quickcpplib
+        GIT_REPOSITORY https://${MMBK_GIT_HOST}/${MMBK_QUICKCPPLIB_REPO}
+        GIT_TAG        ${MMBK_QUICKCPPLIB_TAG}
+        GIT_PROGRESS   TRUE
+    )
+    FetchContent_GetProperties(quickcpplib)
+    if(NOT quickcpplib_POPULATED)
+        FetchContent_Populate(quickcpplib)
+    endif()
 endif()
 
 # ---------------------------------------------------------------------------
 # outcome v2 (header-only)
 # ---------------------------------------------------------------------------
-FetchContent_Declare(
-    outcome
-    GIT_REPOSITORY https://${MMBK_GIT_HOST}/${MMBK_OUTCOME_REPO}
-    GIT_TAG        ${MMBK_OUTCOME_TAG}
-    SOURCE_DIR     ${CMAKE_SOURCE_DIR}/deps/outcome
-    GIT_PROGRESS   TRUE
-)
-FetchContent_GetProperties(outcome)
-if(NOT outcome_POPULATED)
-    FetchContent_Populate(outcome)
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/deps/outcome)
+    set(outcome_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/deps/outcome)
+else()
+    FetchContent_Declare(
+        outcome
+        GIT_REPOSITORY https://${MMBK_GIT_HOST}/${MMBK_OUTCOME_REPO}
+        GIT_TAG        ${MMBK_OUTCOME_TAG}
+        GIT_PROGRESS   TRUE
+    )
+    FetchContent_GetProperties(outcome)
+    if(NOT outcome_POPULATED)
+        FetchContent_Populate(outcome)
+    endif()
 endif()
 
 # ---------------------------------------------------------------------------
 # ghc/filesystem (header-only)
 # ---------------------------------------------------------------------------
-FetchContent_Declare(
-    ghcfilesystem
-    GIT_REPOSITORY https://${MMBK_GIT_HOST}/${MMBK_FILESYSTEM_REPO}
-    GIT_TAG        ${MMBK_FILESYSTEM_TAG}
-    SOURCE_DIR     ${CMAKE_SOURCE_DIR}/deps/filesystem
-    GIT_PROGRESS   TRUE
-)
-FetchContent_GetProperties(ghcfilesystem)
-if(NOT ghcfilesystem_POPULATED)
-    FetchContent_Populate(ghcfilesystem)
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/deps/filesystem)
+    set(ghcfilesystem_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/deps/filesystem)
+else()
+    FetchContent_Declare(
+        ghcfilesystem
+        GIT_REPOSITORY https://${MMBK_GIT_HOST}/${MMBK_FILESYSTEM_REPO}
+        GIT_TAG        ${MMBK_FILESYSTEM_TAG}
+        GIT_PROGRESS   TRUE
+    )
+    FetchContent_GetProperties(ghcfilesystem)
+    if(NOT ghcfilesystem_POPULATED)
+        FetchContent_Populate(ghcfilesystem)
+    endif()
 endif()
 
 # ---------------------------------------------------------------------------
@@ -114,40 +134,48 @@ endif()
 # ---------------------------------------------------------------------------
 set(LIBUV_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(BUILD_TESTING     OFF CACHE BOOL "" FORCE)
-FetchContent_Declare(
-    libuv
-    GIT_REPOSITORY https://${MMBK_GIT_HOST}/${MMBK_LIBUV_REPO}
-    GIT_TAG        ${MMBK_LIBUV_TAG}
-    SOURCE_DIR     ${CMAKE_SOURCE_DIR}/deps/libuv
-    GIT_PROGRESS   TRUE
-)
-FetchContent_GetProperties(libuv)
-if(NOT libuv_POPULATED)
-    FetchContent_MakeAvailable(libuv)
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/deps/libuv)
+    set(libuv_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/deps/libuv)
+    add_subdirectory(${libuv_SOURCE_DIR})
+    set(libuv_POPULATED TRUE)
+else()
+    FetchContent_Declare(
+        libuv
+        GIT_REPOSITORY https://${MMBK_GIT_HOST}/${MMBK_LIBUV_REPO}
+        GIT_TAG        ${MMBK_LIBUV_TAG}
+        GIT_PROGRESS   TRUE
+    )
+    FetchContent_GetProperties(libuv)
+    if(NOT libuv_POPULATED)
+        FetchContent_MakeAvailable(libuv)
+    endif()
 endif()
 
 # ---------------------------------------------------------------------------
 # uvw (C++ wrapper for libuv; compiled as static library with UVW_AS_LIB)
 # ---------------------------------------------------------------------------
-FetchContent_Declare(
-    uvw
-    GIT_REPOSITORY https://${MMBK_GIT_HOST}/${MMBK_UVW_REPO}
-    GIT_TAG        ${MMBK_UVW_TAG}
-    SOURCE_DIR     ${CMAKE_SOURCE_DIR}/deps/uvw
-    GIT_PROGRESS   TRUE
-)
-FetchContent_GetProperties(uvw)
-if(NOT uvw_POPULATED)
-    FetchContent_Populate(uvw)
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/deps/uvw)
+    set(uvw_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/deps/uvw)
+else()
+    FetchContent_Declare(
+        uvw
+        GIT_REPOSITORY https://${MMBK_GIT_HOST}/${MMBK_UVW_REPO}
+        GIT_TAG        ${MMBK_UVW_TAG}
+        GIT_PROGRESS   TRUE
+    )
+    FetchContent_GetProperties(uvw)
+    if(NOT uvw_POPULATED)
+        FetchContent_Populate(uvw)
+    endif()
 endif()
 
-file(GLOB UVW_SOURCES "${CMAKE_SOURCE_DIR}/deps/uvw/src/uvw/*.cpp")
+file(GLOB UVW_SOURCES "${uvw_SOURCE_DIR}/src/uvw/*.cpp")
 add_library(uvw_impl STATIC ${UVW_SOURCES})
 target_compile_features(uvw_impl PRIVATE cxx_std_17)
 target_compile_definitions(uvw_impl PUBLIC UVW_AS_LIB)
 target_include_directories(uvw_impl PUBLIC
-    ${CMAKE_SOURCE_DIR}/deps/uvw/src
-    ${CMAKE_SOURCE_DIR}/deps/libuv/include
+    ${uvw_SOURCE_DIR}/src
+    ${libuv_SOURCE_DIR}/include
 )
 target_link_libraries(uvw_impl PUBLIC uv_a)
 if(MSVC)
@@ -157,35 +185,41 @@ endif()
 # ---------------------------------------------------------------------------
 # MemeUtils (header-only part used: mmutilspp/locale/tag.h)
 # ---------------------------------------------------------------------------
-FetchContent_Declare(
-    MemeUtils
-    GIT_REPOSITORY https://${MMBK_GIT_HOST}/${MMBK_MEMEUTILS_REPO}
-    GIT_TAG        ${MMBK_MEMEUTILS_TAG}
-    SOURCE_DIR     ${CMAKE_SOURCE_DIR}/deps/MemeUtils
-    GIT_PROGRESS   TRUE
-)
-FetchContent_GetProperties(memeutils)
-if(NOT memeutils_POPULATED)
-    FetchContent_Populate(memeutils)
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/deps/MemeUtils)
+    set(memeutils_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/deps/MemeUtils)
+else()
+    FetchContent_Declare(
+        MemeUtils
+        GIT_REPOSITORY https://${MMBK_GIT_HOST}/${MMBK_MEMEUTILS_REPO}
+        GIT_TAG        ${MMBK_MEMEUTILS_TAG}
+        GIT_PROGRESS   TRUE
+    )
+    FetchContent_GetProperties(memeutils)
+    if(NOT memeutils_POPULATED)
+        FetchContent_Populate(memeutils)
+    endif()
 endif()
 
 # ---------------------------------------------------------------------------
 # sqlite3 amalgamation (only for unit tests; catalog.h itself does not ship sqlite)
 # ---------------------------------------------------------------------------
-FetchContent_Declare(
-    sqlite3
-    URL        ${MMBK_SQLITE3_URL}
-    URL_HASH   SHA256=${MMBK_SQLITE3_SHA256}
-    SOURCE_DIR ${CMAKE_SOURCE_DIR}/deps/sqlite3
-    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-)
-FetchContent_GetProperties(sqlite3)
-if(NOT sqlite3_POPULATED)
-    FetchContent_Populate(sqlite3)
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/deps/sqlite3)
+    set(sqlite3_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/deps/sqlite3)
+else()
+    FetchContent_Declare(
+        sqlite3
+        URL        ${MMBK_SQLITE3_URL}
+        URL_HASH   SHA256=${MMBK_SQLITE3_SHA256}
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    )
+    FetchContent_GetProperties(sqlite3)
+    if(NOT sqlite3_POPULATED)
+        FetchContent_Populate(sqlite3)
+    endif()
 endif()
 
-add_library(sqlite3_amalg STATIC ${CMAKE_SOURCE_DIR}/deps/sqlite3/sqlite3.c)
-target_include_directories(sqlite3_amalg PUBLIC ${CMAKE_SOURCE_DIR}/deps/sqlite3)
+add_library(sqlite3_amalg STATIC ${sqlite3_SOURCE_DIR}/sqlite3.c)
+target_include_directories(sqlite3_amalg PUBLIC ${sqlite3_SOURCE_DIR})
 target_compile_definitions(sqlite3_amalg PRIVATE
     SQLITE_THREADSAFE=1
     SQLITE_OMIT_LOAD_EXTENSION
