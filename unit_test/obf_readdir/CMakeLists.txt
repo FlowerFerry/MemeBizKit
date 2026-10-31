@@ -9,19 +9,19 @@ include(FetchContent)
 
 FetchContent_Declare(
 	fmt
-	GIT_REPOSITORY https://githubfast.com/fmtlib/fmt.git
+	GIT_REPOSITORY https://github.com/fmtlib/fmt.git
 	GIT_TAG 10.2.1
 	SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/deps/fmt-10.2.1
 )
 FetchContent_Populate(fmt)
-
+	
 FetchContent_Declare(
-	MemeString
-	GIT_REPOSITORY https://githubfast.com/FlowerFerry/MemeString.git
+	obf_memestring
+	GIT_REPOSITORY https://github.com/FlowerFerry/MemeString.git
 	GIT_TAG develop
-	SOURCE_DIR ${CMAKE_SOURCE_DIR}/deps/MemeString
+	SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/deps/MemeString
 )
-FetchContent_Populate(MemeString)
+FetchContent_Populate(obf_memestring)
 
 add_subdirectory(deps/MemeString)
 

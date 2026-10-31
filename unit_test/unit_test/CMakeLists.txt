@@ -42,7 +42,6 @@ FetchContent_Declare(
     Catch2
     GIT_REPOSITORY https://${MMBK_GIT_HOST}/${MMBK_CATCH2_REPO}
     GIT_TAG        ${MMBK_CATCH2_TAG}
-    SOURCE_DIR     ${CMAKE_SOURCE_DIR}/deps/Catch2
     GIT_PROGRESS   TRUE
 )
 FetchContent_GetProperties(catch2)
@@ -58,7 +57,6 @@ FetchContent_Declare(
     MemeString
     GIT_REPOSITORY https://${MMBK_GIT_HOST}/${MMBK_MEMESTRING_REPO}
     GIT_TAG        ${MMBK_MEMESTRING_TAG}
-    SOURCE_DIR     ${CMAKE_SOURCE_DIR}/deps/MemeString
     GIT_PROGRESS   TRUE
 )
 FetchContent_GetProperties(memestring)
