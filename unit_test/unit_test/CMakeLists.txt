@@ -222,14 +222,14 @@ if(MSVC)
 endif()
 
 target_include_directories(${PROJECT_NAME} PRIVATE
-    ${CMAKE_SOURCE_DIR}/deps/Catch2/single_include
-    ${CMAKE_SOURCE_DIR}/deps/MemeString/include
-    ${CMAKE_SOURCE_DIR}/deps/MemeUtils/include
-    ${CMAKE_SOURCE_DIR}/deps/quickcpplib/include
-    ${CMAKE_SOURCE_DIR}/deps/outcome/include
-    ${CMAKE_SOURCE_DIR}/deps/filesystem/include
-    ${CMAKE_SOURCE_DIR}/deps/libuv/include
-    ${CMAKE_SOURCE_DIR}/deps/uvw/src
+    ${catch2_SOURCE_DIR}/single_include
+    ${memestring_SOURCE_DIR}/include
+    ${memeutils_SOURCE_DIR}/include
+    ${quickcpplib_SOURCE_DIR}/include
+    ${outcome_SOURCE_DIR}/include
+    ${ghcfilesystem_SOURCE_DIR}/include
+    ${libuv_SOURCE_DIR}/include
+    ${uvw_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../../include
 )
 
