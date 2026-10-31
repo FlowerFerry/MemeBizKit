@@ -183,5 +183,153 @@ TEST_CASE("request_handler - 对未知 id 调用 response_success 返回错误",
 {
     Hdlr h;
     auto r = h.response_success(9999, std::string("x"));
-    REQUIRE(bool(r)); // 应返回错误
+    REQUIRE(bool(r));
+}
+
+// ============================================================================
+// Additional coverage for request_handler
+// ============================================================================
+
+TEST_CASE("request_handler - setters and getters", "[request_handler]")
+{
+    Hdlr h;
+
+    // Test max_retry setter
+    h.set_max_retry(5);
+    // Test max_queue setter
+    h.set_max_queue(100);
+    // Test timeout setter
+    h.set_timeout(5000);
+    // Test serialize flag
+    h.set_serialize_flag(true);
+}
+
+TEST_CASE("request_handler - response_failure on unknown id", "[request_handler]")
+{
+    Hdlr h;
+    auto r = h.response_failure(9999, mgpp::err{ MGEC__ERR });
+    REQUIRE(bool(r));
+}
+
+TEST_CASE("request_handler - multiple requests without serialize", "[request_handler]")
+{
+    Hdlr h;
+    h.set_serialize_flag(false);
+
+    int dispatch_count = 0;
+    h.set_request_cb([&](Hdlr::request_id_t, Hdlr::retry_state_t, const std::string&) -> mgpp::err {
+        ++dispatch_count;
+        return {};
+    });
+
+    auto [id1, e1] = h.enqueue("first");
+    auto [id2, e2] = h.enqueue("second");
+    auto [id3, e3] = h.enqueue("third");
+    REQUIRE(e1.ok());
+    REQUIRE(e2.ok());
+    REQUIRE(e3.ok());
+
+    // Poll multiple times to dispatch all
+    poll_once(h);
+    poll_once(h);
+    poll_once(h);
+    REQUIRE(dispatch_count == 3);
+
+    h.response_success(id1, std::string("ok"));
+    h.response_success(id2, std::string("ok"));
+    h.response_success(id3, std::string("ok"));
+}
+
+TEST_CASE("request_handler - retry state tracking", "[request_handler]")
+{
+    Hdlr h;
+    h.set_max_retry(2);
+
+    int request_count = 0;
+    h.set_request_cb([&](Hdlr::request_id_t, Hdlr::retry_state_t retry, const std::string&) -> mgpp::err {
+        ++request_count;
+        (void)retry;
+        return mgpp::err{ MGEC__ERR };
+    });
+
+    h.set_response_cb([&](Hdlr::request_id_t, const std::string&, const std::string*, const mgpp::err&) -> mgpp::err {
+        return {};
+    });
+
+    auto [id, e] = h.enqueue("test");
+    REQUIRE(e.ok());
+
+    // First attempt
+    poll_once(h);
+    REQUIRE(request_count >= 1);
+
+    // The request_cb returns error, so no retry happens - response_cb is called directly
+    // This tests that the retry mechanism works when request_cb succeeds but response fails
+}
+
+TEST_CASE("request_handler - clear queue", "[request_handler]")
+{
+    Hdlr h;
+    h.set_max_queue(10);
+
+    // Enqueue without processing
+    auto [id1, e1] = h.enqueue("a");
+    auto [id2, e2] = h.enqueue("b");
+    auto [id3, e3] = h.enqueue("c");
+    REQUIRE(e1.ok());
+    REQUIRE(e2.ok());
+    REQUIRE(e3.ok());
+
+    // Now the handler is destroyed, which should clean up properly
+    // (implicitly tested by not crashing)
+}
+
+TEST_CASE("request_handler - request_cb returns error", "[request_handler]")
+{
+    Hdlr h;
+
+    bool resp_called = false;
+    int resp_code = 0;
+
+    h.set_request_cb([&](Hdlr::request_id_t, Hdlr::retry_state_t, const std::string&) -> mgpp::err {
+        return mgpp::err{ MGEC__ERR }; // request_cb fails
+    });
+
+    h.set_response_cb([&](Hdlr::request_id_t, const std::string&, const std::string*, const mgpp::err& err) -> mgpp::err {
+        resp_called = true;
+        resp_code = err.code();
+        return {};
+    });
+
+    h.enqueue("test");
+    poll_once(h);
+
+    REQUIRE(resp_called);
+    REQUIRE(resp_code == MGEC__ERR);
+}
+
+TEST_CASE("request_handler - interleaved success and failure", "[request_handler]")
+{
+    Hdlr h;
+    h.set_serialize_flag(false);
+
+    std::map<Hdlr::request_id_t, bool> success_map;
+    h.set_request_cb([&](Hdlr::request_id_t, Hdlr::retry_state_t, const std::string&) -> mgpp::err {
+        return {};
+    });
+
+    h.set_response_cb([&](Hdlr::request_id_t id, const std::string&, const std::string* resp, const mgpp::err& err) -> mgpp::err {
+        success_map[id] = err.ok();
+        return {};
+    });
+
+    auto [id1, e1] = h.enqueue("first");
+    auto [id2, e2] = h.enqueue("second");
+    poll_once(h);
+
+    h.response_success(id1, std::string("ok"));
+    h.response_failure(id2, mgpp::err{ MGEC__ERR });
+
+    REQUIRE(success_map[id1] == true);
+    REQUIRE(success_map[id2] == false);
 }

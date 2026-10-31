@@ -831,3 +831,294 @@ TEST_CASE("catalog state", "[i18n]")
     c.reset();
     fs::remove(main_db);
 }
+
+// ============================================================================
+// Additional coverage: fast_catalog_builder error handling
+// ============================================================================
+
+TEST_CASE("fast_catalog_builder - load from non-existent db", "[i18n]")
+{
+    fast_catalog_builder b;
+    auto res = b.load_from_sqlite("/nonexistent/path/to/db.db");
+    REQUIRE(!res.ok());
+}
+
+TEST_CASE("fast_catalog_builder - malformed language table", "[i18n]")
+{
+    static const char* BAD_LANG_SQL = R"(
+CREATE TABLE i18n_language (lang TEXT PRIMARY KEY, plural_rule TEXT);
+INSERT INTO i18n_language VALUES ('zh-CN','@invalid_family');
+CREATE TABLE i18n_message (lang TEXT, ctx TEXT, msgid TEXT, form INTEGER, msgstr TEXT, PRIMARY KEY (lang, ctx, msgid, form));
+)";
+    const std::string db = make_db("bad_lang", BAD_LANG_SQL);
+    fast_catalog_builder b;
+    auto res = b.load_from_sqlite(db.c_str());
+    REQUIRE(res.ok());
+    fs::remove(db);
+}
+
+TEST_CASE("fast_catalog_builder - message without language entry", "[i18n]")
+{
+    static const char* ORPHAN_MSG_SQL = R"(
+CREATE TABLE i18n_language (lang TEXT PRIMARY KEY, plural_rule TEXT);
+INSERT INTO i18n_language VALUES ('zh-CN','');
+CREATE TABLE i18n_message (lang TEXT, ctx TEXT, msgid TEXT, form INTEGER, msgstr TEXT, PRIMARY KEY (lang, ctx, msgid, form));
+INSERT INTO i18n_message VALUES ('zh-CN','','Test',0,'测试');
+INSERT INTO i18n_message VALUES ('unknown-lang','','Orphan',0,'孤儿');
+)";
+    const std::string db = make_db("orphan", ORPHAN_MSG_SQL);
+    fast_catalog_builder b;
+    REQUIRE(b.load_from_sqlite(db.c_str()).ok());
+    auto c = b.build();
+    REQUIRE(S(c->tr(make_tag("zh-CN"), "Test")) == "测试");
+    REQUIRE(S(c->tr(make_tag("zh-CN"), "Orphan")) == "Orphan");
+    fs::remove(db);
+}
+
+TEST_CASE("fast_catalog_builder - plural forms out of range", "[i18n]")
+{
+    static const char* BIG_FORM_SQL = R"(
+CREATE TABLE i18n_language (lang TEXT PRIMARY KEY, plural_rule TEXT);
+INSERT INTO i18n_language VALUES ('zh-CN','');
+CREATE TABLE i18n_message (lang TEXT, ctx TEXT, msgid TEXT, form INTEGER, msgstr TEXT, PRIMARY KEY (lang, ctx, msgid, form));
+INSERT INTO i18n_message VALUES ('zh-CN','','Test',20,'超出范围');
+)";
+    const std::string db = make_db("big_form", BIG_FORM_SQL);
+    fast_catalog_builder b;
+    REQUIRE(b.load_from_sqlite(db.c_str()).ok());
+    auto c = b.build();
+    REQUIRE(S(c->tr(make_tag("zh-CN"), "Test")) == "Test");
+    fs::remove(db);
+}
+
+// ============================================================================
+// Additional coverage: lite_catalog specific features
+// ============================================================================
+
+TEST_CASE("lite_catalog - open non-existent db", "[i18n]")
+{
+    auto lite = lite_catalog::open("/nonexistent/db.db");
+    REQUIRE(!lite);
+}
+
+TEST_CASE("lite_catalog - empty db", "[i18n]")
+{
+    static const char* EMPTY_SQL = R"(
+CREATE TABLE i18n_language (lang TEXT PRIMARY KEY, plural_rule TEXT);
+CREATE TABLE i18n_message (lang TEXT, ctx TEXT, msgid TEXT, form INTEGER, msgstr TEXT, PRIMARY KEY (lang, ctx, msgid, form));
+)";
+    const std::string db = make_db("empty", EMPTY_SQL);
+    auto lite = lite_catalog::open(db.c_str());
+    REQUIRE(lite);
+    REQUIRE(S(lite->tr(make_tag("zh-CN"), "Anything")) == "Anything");
+    fs::remove(db);
+}
+
+TEST_CASE("lite_catalog - fallback chain", "[i18n]")
+{
+    static const char* FALLBACK_SQL = R"(
+CREATE TABLE i18n_language (lang TEXT PRIMARY KEY, plural_rule TEXT);
+INSERT INTO i18n_language VALUES ('zh',''), ('zh-CN',''), ('zh-Hans',''), ('zh-Hans-CN','');
+CREATE TABLE i18n_message (lang TEXT, ctx TEXT, msgid TEXT, form INTEGER, msgstr TEXT, PRIMARY KEY (lang, ctx, msgid, form));
+INSERT INTO i18n_message VALUES ('zh','','OnlyInZh',0,'中文通用');
+INSERT INTO i18n_message VALUES ('zh-CN','','OnlyInZhCN',0,'简体中文');
+)";
+    const std::string db = make_db("fallback", FALLBACK_SQL);
+    {
+        auto lite = lite_catalog::open(db.c_str());
+        REQUIRE(lite);
+        // zh-Hans-CN falls back to zh-CN then zh
+        REQUIRE(S(lite->tr(make_tag("zh-Hans-CN"), "OnlyInZh")) == "中文通用");
+        REQUIRE(S(lite->tr(make_tag("zh-Hans-CN"), "OnlyInZhCN")) == "简体中文");
+        // zh-TW falls back to zh (they share the same base language)
+        REQUIRE(S(lite->tr(make_tag("zh-TW"), "OnlyInZh")) == "中文通用");
+        // No fallback available for this key
+        REQUIRE(S(lite->tr(make_tag("zh-TW"), "NoSuchKey")) == "NoSuchKey");
+        // lite goes out of scope here, releasing the db handle
+    }
+    // Small delay to ensure handle is released on Windows
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    fs::remove(db);
+}
+
+// ============================================================================
+// Additional coverage: catalog_registry edge cases
+// ============================================================================
+
+TEST_CASE("catalog_registry - empty registry", "[i18n]")
+{
+    catalog_registry reg;
+    REQUIRE(reg.size() == 0);
+    REQUIRE(S(reg.tr(make_tag("zh-CN"), "Test")) == "Test");
+    REQUIRE(reg.get("nonexistent") == nullptr);
+    REQUIRE(reg.remove("nonexistent").released());
+}
+
+TEST_CASE("catalog_registry - duplicate domain", "[i18n]")
+{
+    const std::string main_db = make_db("dup_main", MAIN_SQL);
+    fast_catalog_builder b;
+    REQUIRE(b.load_from_sqlite(main_db.c_str()).ok());
+    auto fast = b.build();
+
+    catalog_registry reg;
+    REQUIRE(reg.add("host", fast));
+    REQUIRE(!reg.add("host", fast));
+    REQUIRE(reg.size() == 1);
+
+    fs::remove(main_db);
+}
+
+TEST_CASE("catalog_registry - priority order", "[i18n]")
+{
+    static const char* HOST_SQL = R"(
+CREATE TABLE i18n_language (lang TEXT PRIMARY KEY, plural_rule TEXT);
+INSERT INTO i18n_language VALUES ('zh-CN','');
+CREATE TABLE i18n_message (lang TEXT, ctx TEXT, msgid TEXT, form INTEGER, msgstr TEXT, PRIMARY KEY (lang, ctx, msgid, form));
+INSERT INTO i18n_message VALUES ('zh-CN','','Shared',0,'主机');
+INSERT INTO i18n_message VALUES ('zh-CN','','HostOnly',0,'主机专用');
+)";
+    static const char* PLUGIN_SQL = R"(
+CREATE TABLE i18n_language (lang TEXT PRIMARY KEY, plural_rule TEXT);
+INSERT INTO i18n_language VALUES ('zh-CN','');
+CREATE TABLE i18n_message (lang TEXT, ctx TEXT, msgid TEXT, form INTEGER, msgstr TEXT, PRIMARY KEY (lang, ctx, msgid, form));
+INSERT INTO i18n_message VALUES ('zh-CN','','Shared',0,'插件');
+INSERT INTO i18n_message VALUES ('zh-CN','','PluginOnly',0,'插件专用');
+)";
+
+    const std::string host_db = make_db("prio_host", HOST_SQL);
+    const std::string plugin_db = make_db("prio_plugin", PLUGIN_SQL);
+
+    fast_catalog_builder hb, pb;
+    REQUIRE(hb.load_from_sqlite(host_db.c_str()).ok());
+    REQUIRE(pb.load_from_sqlite(plugin_db.c_str()).ok());
+    auto host = hb.build();
+    auto plugin = pb.build();
+
+    catalog_registry reg;
+    reg.add("host", host);
+    reg.add("plugin", plugin);
+
+    REQUIRE(S(reg.tr(make_tag("zh-CN"), "Shared")) == "主机");
+    REQUIRE(S(reg.tr(make_tag("zh-CN"), "HostOnly")) == "主机专用");
+    REQUIRE(S(reg.tr(make_tag("zh-CN"), "PluginOnly")) == "插件专用");
+
+    fs::remove(host_db);
+    fs::remove(plugin_db);
+}
+
+TEST_CASE("catalog_registry - set_default_language", "[i18n]")
+{
+    const std::string main_db = make_db("def_lang", MAIN_SQL);
+    fast_catalog_builder b;
+    REQUIRE(b.load_from_sqlite(main_db.c_str()).ok());
+    auto fast = b.build();
+
+    catalog_registry reg;
+    reg.add("host", fast);
+
+    REQUIRE(S(reg.tr("Open")) == "Open");
+    reg.set_default_language(make_tag("zh-CN"));
+    REQUIRE(S(reg.tr("Open")) == "打开");
+    reg.set_default_language(make_tag("ru"));
+    REQUIRE(S(reg.tr("Open")) == "Открыть");
+
+    fs::remove(main_db);
+}
+
+// ============================================================================
+// Additional coverage: plural edge cases
+// ============================================================================
+
+TEST_CASE("plural - zero forms edge case", "[i18n][plural]")
+{
+    plural_rule r;
+    REQUIRE(plural_rule::parse("nplurals=1; plural=0;", r));
+    REQUIRE(r.nplurals() == 1);
+    REQUIRE(r.index(0) == 0);
+    REQUIRE(r.index(1) == 0);
+    REQUIRE(r.index(100) == 0);
+}
+
+TEST_CASE("plural - large numbers", "[i18n][plural]")
+{
+    plural_rule ru = plural_rule::builtin(plural_family::ru);
+    REQUIRE(ru.index(UINT64_MAX) == ru.index(UINT64_MAX % 100));
+}
+
+TEST_CASE("plural - all builtin families", "[i18n][plural]")
+{
+    // Test all builtin families (one, en, fr, ru, pl, cs, lt, lv, ro, sl, ga, ar)
+    plural_rule r;
+    REQUIRE(plural_rule::parse("nplurals=1; plural=0;", r));
+    REQUIRE(r.nplurals() == 1);
+    
+    r = plural_rule::builtin(plural_family::en);
+    REQUIRE(r.nplurals() == 2);
+    r = plural_rule::builtin(plural_family::fr);
+    REQUIRE(r.nplurals() == 2);
+    r = plural_rule::builtin(plural_family::ru);
+    REQUIRE(r.nplurals() == 3);
+    r = plural_rule::builtin(plural_family::pl);
+    REQUIRE(r.nplurals() == 3);
+    r = plural_rule::builtin(plural_family::cs);
+    REQUIRE(r.nplurals() == 3);
+    r = plural_rule::builtin(plural_family::lt);
+    REQUIRE(r.nplurals() == 3);
+    r = plural_rule::builtin(plural_family::lv);
+    REQUIRE(r.nplurals() == 3);
+    r = plural_rule::builtin(plural_family::ro);
+    REQUIRE(r.nplurals() == 3);
+    r = plural_rule::builtin(plural_family::sl);
+    REQUIRE(r.nplurals() == 4);
+    r = plural_rule::builtin(plural_family::ga);
+    REQUIRE(r.nplurals() == 5);
+    r = plural_rule::builtin(plural_family::ar);
+    REQUIRE(r.nplurals() == 6);
+}
+
+// ============================================================================
+// Additional coverage: context and edge translations
+// ============================================================================
+
+TEST_CASE("translation - empty context", "[i18n]")
+{
+    const std::string main_db = make_db("empty_ctx", MAIN_SQL);
+    fast_catalog_builder b;
+    REQUIRE(b.load_from_sqlite(main_db.c_str()).ok());
+    auto c = b.build();
+
+    REQUIRE(S(c->tr(make_tag("zh-CN"), "File")) == "档案");
+    REQUIRE(S(c->tr_ctx(make_tag("zh-CN"), "", "File")) == "档案");
+    REQUIRE(S(c->tr_ctx(make_tag("zh-CN"), "menu", "File")) == "文件菜单");
+
+    fs::remove(main_db);
+}
+
+TEST_CASE("translation - plural with zero", "[i18n]")
+{
+    const std::string main_db = make_db("plural_zero", MAIN_SQL);
+    fast_catalog_builder b;
+    REQUIRE(b.load_from_sqlite(main_db.c_str()).ok());
+    auto c = b.build();
+
+    REQUIRE(S(c->tr_n(make_tag("ru"), "%d file", "%d files", 0)) == "%d файлов");
+    REQUIRE(S(c->tr_n(make_tag("zh-CN"), "%d file", "%d files", 0)) == "%d 个文件");
+
+    fs::remove(main_db);
+}
+
+TEST_CASE("translation - source language bypass", "[i18n]")
+{
+    const std::string main_db = make_db("src_bypass", MAIN_SQL);
+    fast_catalog_builder b;
+    REQUIRE(b.load_from_sqlite(main_db.c_str()).ok());
+    auto c = b.build();
+
+    c->set_source_language(make_tag("zh-CN"));
+    REQUIRE(S(c->tr(make_tag("zh-CN"), "Open")) == "Open");
+    REQUIRE(S(c->tr(make_tag("zh-Hans-CN"), "Open")) == "Open");
+    REQUIRE(S(c->tr(make_tag("ru"), "Open")) == "Открыть");
+
+    fs::remove(main_db);
+}

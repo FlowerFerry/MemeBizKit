@@ -174,3 +174,117 @@ TEST_CASE("txtfile_monitor - stop 时不死锁", "[txtfile_monitor]")
     // 宽泛上限：5 秒内必须完成
     REQUIRE(elapsed < std::chrono::seconds(5));
 }
+
+// ============================================================================
+// Additional coverage for text_file_monitor
+// ============================================================================
+
+TEST_CASE("txtfile_monitor - file not exists", "[txtfile_monitor]")
+{
+    MonitorTempDir tmp;
+    auto filepath = tmp.path / "nonexistent.txt";
+
+    Monitor m;
+    m.set_filepath(to_mm(filepath));
+
+    // set_default_callback returns a string, not void
+    m.set_default_callback([]() -> memepp::string {
+        return memepp::string{ "default" };
+    });
+
+    REQUIRE(m.start() == 0);
+    m.stop();
+}
+
+TEST_CASE("txtfile_monitor - change callback registration", "[txtfile_monitor]")
+{
+    MonitorTempDir tmp;
+    auto filepath = tmp.path / "change_reg.txt";
+
+    {
+        std::ofstream ofs(filepath.native());
+        ofs << "data";
+    }
+
+    Monitor m;
+    m.set_filepath(to_mm(filepath));
+    m.set_parse_callback([](const memepp::string_view& data, std::shared_ptr<MonitorDoc>& doc) -> int {
+        doc->content = std::string(data.data(), data.size());
+        return 1;
+    });
+
+    int cb1_count = 0;
+    int cb2_count = 0;
+
+    m.set_change_callback("cb1", [&](const std::shared_ptr<MonitorDoc>&) {
+        ++cb1_count;
+    });
+    m.set_change_callback("cb2", [&](const std::shared_ptr<MonitorDoc>&) {
+        ++cb2_count;
+    });
+
+    REQUIRE(m.start() == 0);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    {
+        std::ofstream ofs(filepath.native(), std::ios::trunc);
+        ofs << "updated";
+    }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+    m.stop();
+
+    REQUIRE(cb1_count >= 1);
+    REQUIRE(cb2_count >= 1);
+}
+
+TEST_CASE("txtfile_monitor - multiple file modifications", "[txtfile_monitor]")
+{
+    MonitorTempDir tmp;
+    auto filepath = tmp.path / "multi_mod.txt";
+
+    {
+        std::ofstream ofs(filepath.native());
+        ofs << "v1";
+    }
+
+    Monitor m;
+    m.set_filepath(to_mm(filepath));
+    m.set_parse_callback([](const memepp::string_view& data, std::shared_ptr<MonitorDoc>& doc) -> int {
+        doc->content = std::string(data.data(), data.size());
+        return 1;
+    });
+
+    std::atomic<int> change_count{0};
+    std::string last_content;
+    std::mutex content_mutex;
+
+    m.set_change_callback("test",
+        [&](const std::shared_ptr<MonitorDoc>& doc) {
+            std::lock_guard<std::mutex> lk(content_mutex);
+            last_content = doc->content;
+            ++change_count;
+        });
+
+    REQUIRE(m.start() == 0);
+
+    for (int i = 0; i < 3; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        {
+            std::ofstream ofs(filepath.native(), std::ios::trunc);
+            ofs << "v" << (i + 2);
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+    m.stop();
+
+    REQUIRE(change_count.load() >= 3);
+    {
+        std::lock_guard<std::mutex> lk(content_mutex);
+        REQUIRE(last_content == "v4");
+    }
+}
