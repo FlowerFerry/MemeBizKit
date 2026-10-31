@@ -60,31 +60,25 @@ jobs:
 
   linux-gcc-aarch64:
     runs-on: ubuntu-latest
+    container:
+      image: dockcross/linux-arm64
     steps:
       - uses: actions/checkout@v4
-      - name: Setup cross build
-        uses: docker/setup-qemu-action@v3
-      - name: Build with dockcross
-        uses: dockcross/dockcross@v1
-        with:
-          image: dockcross/linux-arm64
-          command: |
-            cmake -B build -S unit_test -DCMAKE_BUILD_TYPE=Release
-            cmake --build build
+      - name: Configure
+        run: cmake -B build -S unit_test/unit_test -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build
 
   linux-gcc-armv7l:
     runs-on: ubuntu-latest
+    container:
+      image: dockcross/linux-armv7
     steps:
       - uses: actions/checkout@v4
-      - name: Setup cross build
-        uses: docker/setup-qemu-action@v3
-      - name: Build with dockcross
-        uses: dockcross/dockcross@v1
-        with:
-          image: dockcross/linux-armv7
-          command: |
-            cmake -B build -S unit_test -DCMAKE_BUILD_TYPE=Release
-            cmake --build build
+      - name: Configure
+        run: cmake -B build -S unit_test/unit_test -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build
 
   android-aarch64:
     runs-on: ubuntu-latest
