@@ -273,6 +273,11 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     sqlite3_amalg
 )
 
+# Catch2 uses __android_log_write on Android; liblog must be linked explicitly
+if(ANDROID)
+    target_link_libraries(${PROJECT_NAME} PRIVATE log)
+endif()
+
 set_target_properties(${PROJECT_NAME} PROPERTIES
     BUILD_WITH_INSTALL_RPATH TRUE
     INSTALL_RPATH "$ORIGIN"
